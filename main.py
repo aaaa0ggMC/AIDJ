@@ -192,7 +192,7 @@ def sync_metadata(client, targets, metadata):
                 resp = get_song_info(client, info)
                 if resp:
                     metadata[name] = json.loads(resp)
-                    with open(METADATA_PATH, "w") as f: json.dump(metadata, f, ensure_ascii=False)
+                    with open(METADATA_PATH, "w") as f: json.dump(metadata, f, ensure_ascii=False,indent = 4)
             except KeyboardInterrupt: raise
             except: continue
     except KeyboardInterrupt:
