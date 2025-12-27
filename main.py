@@ -263,7 +263,7 @@ class DJSession:
 
         if is_verbose: console.print(f"[dim]🤖 Thinking with {model}...[/]")
         
-        base_prompt = "You are a DJ. Output: 1. Intro sentence with emojis. 2. Song list (one per line)."
+        base_prompt = "You are a DJ. Output: 1. Intro sentence with emojis. 2. Song list (one per line). Note that Section 1 and Section 2 are separated with a blank line."
         if self.turn_count == 1 or self.turn_count % 5 == 0:
             content = f"{base_prompt}\nLibrary:\n{self._format_library()}"
             self.chat_history.append({"role": "system", "content": content})
