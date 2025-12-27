@@ -6,7 +6,7 @@
 1.  **DeepSeek API Key** (便宜又大碗，R1/V3 随便切) 🧠
 2.  **本地搭建音乐 API** (用于补全歌词、流派、情绪等元数据)
     * 见 [这个网址](https://github.com/Binaryify/NeteaseCloudMusicApi/tree/185031ddcefad34e294df6933418e44cc70ec31f?tab=readme-ov-file) 🔗
-    * 自己 `clone` 下来 `node app.js` 跑起来就行，**嘘！自己用，不要告诉别人哦** 🤫
+    * 自己 `下载zip` 下来 `node app.js` 跑起来就行，**嘘！自己用，不要告诉别人哦** 🤫
 
 ---
 
@@ -72,8 +72,6 @@ uv pip install -r requirements.txt
 ## 3. 运行即可
 ```bash
 uv run main.py
-# 或者指定场景
-uv run main.py 
 ```
 
 ---
