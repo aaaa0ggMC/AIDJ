@@ -9,6 +9,7 @@ import random
 import glob
 import shutil
 from tqdm import tqdm
+from rapidfuzz import process, fuzz
 
 # --- UI & Interaction Imports ---
 from rich.console import Console
@@ -28,6 +29,8 @@ MUSIC_EXTS = ('.mp3', '.flac', '.wav', '.m4a')
 DS_BASE_URL = "https://api.deepseek.com"
 NCM_BASE_URL = "http://localhost:3000"
 CFG_KEY_MF = "music_folders"
+
+SEPARATOR = "[---SONG_LIST---]"
 
 console = Console()
 
@@ -231,39 +234,94 @@ class DJSession:
         playlist_names = []
         intro_text = ""
         is_verbose = self.config['preferences']['verbose']
-        
-        lines = [l.strip() for l in raw_text.split('\n') if l.strip()]
+
+        # --- 核心切分逻辑 ---
+        if SEPARATOR in raw_text:
+            parts = raw_text.split(SEPARATOR)
+            # parts[0] 是简介，parts[1] 是剩下的所有内容（歌单）
+            intro_text = parts[0].replace('\n', ' ').strip()
+            raw_list_block = parts[1]
+            if is_verbose: console.print(f"[dim]✅ Separator found. Parsing list...[/]")
+        else:
+            # 兜底：AI 忘记输出分隔符
+            if is_verbose and source == "AI":
+                console.print(f"[yellow]⚠️ Separator '{SEPARATOR}' not found! Scanning entire text.[/]")
+            # 这种情况下，我们假设没有简介，或者全部拿去尝试匹配
+            intro_text = ""
+            raw_list_block = raw_text
+
+        # --- 解析歌单部分 (结合 RapidFuzz) ---
+        lines = [l.strip() for l in raw_list_block.split('\n') if l.strip()]
+        library_keys = list(self.music_paths.keys())
+
         for line in lines:
             if line.startswith("#"): continue
+
+            # 清理
+            clean = line.replace('"', '').replace("'", "").strip()
+            if len(clean) < 2: continue # 跳过极短的行
+
             match = None
-            clean = line.replace('"','').replace("'", "")
-            
-            # Match Logic
-            if clean in self.music_paths: match = clean
-            elif len(clean)>2:
-                match = next((k for k in self.music_paths if clean.lower() in k.lower()), None)
-            
+
+            # 使用 RapidFuzz 容错 (防止 AI 写错标点或顺序)
+            result = process.extractOne(
+                clean,
+                library_keys,
+                scorer=fuzz.token_sort_ratio,
+                score_cutoff=80 # 80分以上才算匹配，避免把废话当歌名
+            )
+
+            if result:
+                match_name = result[0]
+                if is_verbose:
+                     console.print(f"[dim]🔍 Match: {clean} -> [green]{match_name}[/][/]")
+                match = match_name
+
             if match:
                 playlist_names.append(match)
-                if is_verbose: console.print(f"[dim]🔍 Match: {clean} -> {match}[/]")
-            elif source == "AI" and not playlist_names:
-                intro_text += line + " "
+            else:
+                # 只有在找到了分隔符的情况下，我们才敢确信剩下的未匹配行是“垃圾数据”
+                # 如果没找到分隔符，这些未匹配行可能是简介的一部分，但这里为了代码简单，我们选择忽略
+                if is_verbose and SEPARATOR in raw_text:
+                     console.print(f"[dim]❌ Ignored line in list block: {clean}[/]")
 
+        # --- 结果构建 ---
         playlist_names = list(dict.fromkeys(playlist_names))
+
         playlist = []
         for name in playlist_names:
-            if source == "AI": self.played_songs.add(name)
+            if source == "AI":
+                self.played_songs.add(name)
             playlist.append({"name": name, "path": self.music_paths[name]})
+
         return playlist, intro_text
 
     def next_step(self, user_request):
+        user_request = f"[USER]：{user_request}\n\n[SYSTEM]：请牢记***输出格式***以及***只能输出现有歌单中的歌曲***。You MUST use the separator {SEPARATOR} between the intro and the playlist."
+
         self.turn_count += 1
         model = self.config['preferences']['model']
         is_verbose = self.config['preferences']['verbose']
 
         if is_verbose: console.print(f"[dim]🤖 Thinking with {model}...[/]")
-        
-        base_prompt = "You are a DJ. Output: 1. Intro sentence with emojis. 2. Song list (one per line). Note that Section 1 and Section 2 are separated with a blank line."
+
+        base_prompt = f"""You are a wonderful DJ. Output format is STRICTLY as follows:
+
+            1. Introduction:
+            - Respond to the user's request with a rich, engaging explanation.
+            - Use emojis!
+            - You can write as much as you want here.
+
+            2. SEPARATOR:
+            - Output exactly "{SEPARATOR}" on a separate line.
+            - Do not use markdown code blocks around it.
+
+            3. Song list:
+            - Output ONLY the exact original keys from the library below the separator.
+            - One key per line.
+            - Do not number the list.
+            """
+
         if self.turn_count == 1 or self.turn_count % 5 == 0:
             content = f"{base_prompt}\nLibrary:\n{self._format_library()}"
             self.chat_history.append({"role": "system", "content": content})
@@ -306,10 +364,16 @@ def execute_player_command(command, playlist, dbus_manager):
         console.print(f"[{color}]📡 DBus: {msg}[/]")
     elif command == "mpv":
         console.print(f"[green]🔊 MPV ({len(playlist)} trks)[/]")
-        subprocess.Popen(['mpv', '--force-window', '--geometry=600x600'] + paths)
+        subprocess.Popen(['mpv', '--force-window', '--geometry=600x600'] + paths,stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True)
     elif command == "vlc":
         console.print(f"[green]🟠 VLC ({len(playlist)} trks)[/]")
-        subprocess.Popen(['vlc', '--one-instance', '--playlist-enqueue'] + paths)
+        subprocess.Popen(['vlc', '--one-instance', '--playlist-enqueue'] + paths,stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True)
 
 def main():
     config = load_config()
@@ -443,9 +507,33 @@ def main():
                 play_list = pl
                 if intro: console.print(f"\n[bold magenta]{intro}[/]\n")
                 
-                t = Table(show_header=True, title=f"Playlist ({len(pl)})")
-                t.add_column("Track")
-                for i,item in enumerate(pl,1): t.add_row(item['name'])
+                t = Table(show_header=True, title=f"Playlist ({len(pl)})",show_lines=True)
+                t.add_column("Track", style="bold green", no_wrap=True)
+                t.add_column("Language", style="cyan")
+                t.add_column("Genre", style="magenta")
+                t.add_column("Emotion", style="yellow")
+                t.add_column("Loudness", style="dim") # 如果不需要响度可注释掉
+
+                for item in pl:
+                    name = item['name']
+                    # 从 metadata 中安全获取信息，如果没有则返回空字典
+                    info = aidj.metadata.get(name, {})
+
+                    # 辅助函数：处理 数组 vs 字符串，并处理 None
+                    def safe_fmt(val):
+                        if val is None: return "-"
+                        if isinstance(val, list):
+                            return ", ".join(str(x) for x in val)
+                        return str(val)
+
+                    # 提取特定字段 (不包含 review)
+                    lang = safe_fmt(info.get('language'))
+                    genre = safe_fmt(info.get('genre'))
+                    emotion = safe_fmt(info.get('emotion'))
+                    loudness = safe_fmt(info.get('loudness'))
+
+                    t.add_row(name, lang, genre, emotion, loudness)
+
                 console.print(t)
 
                 # ⚡ Persistent Trigger Execution
