@@ -69,7 +69,29 @@ source .venv/bin/activate  # Linux/Mac
 # 安装依赖
 uv pip install -r requirements.txt
 ```
-## 3. 运行即可
+
+## 3. 创建初始配置文件
+在main.py目录下创建config.json，其中preferences不是必选项目，可以不写，程序后自动生成，其他为必选项目。
+```json
+{
+    "music_folders": [
+        "本地音乐库地址"
+    ],
+    "secrets": {
+        "deepseek": "你的DS API密钥"
+    },
+    "preferences": {
+        "model": "deepseek-reasoner",
+        "verbose": false,
+        "auto_play": false,
+        "saved_trigger": "mpv",
+        "dbus_target": "vlc"
+    }
+}
+```
+
+
+## 4. 运行即可
 ```bash
 uv run main.py
 ```
