@@ -124,6 +124,8 @@ uv run main.py
 | model | - | 输入后会进入模型选择界面，可选模型位于config.json中的available models中|
 | save | 文件名字 |  把当前的playlist保存到"./playlists/文件名字"中 |
 | load | (可选)文件名字 | 从./playlists中加载对应的文件作为playlist，若是为空则打开选择界面 |
+| r | 歌曲数目 | 从曲库中真正随机歌曲，生成歌单 |
+| pr | 歌曲数目 | 从曲库中随机歌曲，交给AI调整顺序+删除部分不符合歌曲生成歌单，理论上保证实际歌曲数量大于等于 歌曲数目/2 | 
 
 
 # 没本地曲库咋办

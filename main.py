@@ -18,7 +18,7 @@ import threading
 import tty
 
 # --- Custom Modules ---
-from wait_game import run_waiting_game
+from wait_games import run_waiting_game
 
 # --- UI & Interaction Imports ---
 from rich.console import Console
@@ -40,6 +40,7 @@ NCM_BASE_URL = "http://localhost:3000"
 CFG_KEY_MF = "music_folders"
 
 SEPARATOR = "[---SONG_LIST---]"
+LANGUAGE = "简体中文"
 
 console = Console()
 
@@ -319,58 +320,113 @@ class DJSession:
         return playlist, intro_text
 
     def next_step(self, user_request):
-        # 1. 准备请求
-        user_request = f"[USER]：{user_request}\n\n[SYSTEM]：Check the library. If you find matching songs, use {SEPARATOR} to list them. If the user just wants to chat or NO songs match, DO NOT use the separator, just talk.SONG LIST中的歌曲是给系统看的不是给用户看的，因此你必须遵守格式！不要加入额外的东西。"
-
+        # --- 1. 配置与状态更新 ---
         self.turn_count += 1
         model = self.config['preferences']['model']
         is_verbose = self.config['preferences']['verbose']
 
         if is_verbose: console.print(f"[dim]🤖 Thinking with {model}...[/]")
 
-        # 2. Base Prompt
-        base_prompt = f"""You are a wonderful DJ. Output format is STRICTLY as follows:
-            1. Introduction:
-            - Respond to the user's request with a rich, engaging explanation.
-            - Use emojis!
-            - You can write as much as you want here.
-            2. SEPARATOR:
-            - Output exactly "{SEPARATOR}" on a separate line.
-            - Do not use markdown code blocks around it.
-            3. Song list:
-            - Output ONLY the exact original keys from the library below the separator.
-            - One key per line.
-            - Do not number the list.
-            - 输出歌曲列表前请再次在library中审查一遍
-            """
+        # --- 2. 构建系统指令 (System Prompt - Optimized) ---
+        # 使用“协议模式”告诉AI，它正在通过一个严格的管道传输数据
+        base_prompt = base_prompt = f"""
+### ROLE DEFINITION
+You are a **charismatic, knowledgeable, and expressive AI Radio Host**.
+Your goal is not just to list songs, but to **curate an experience**.
+-   **Personality:** Passionate, poetic, slightly "hyped" or "deep" (depending on the mood), and vibe-focused.
+-   **Rule:** BE EXPRESSIVE. Do NOT give short, robotic responses like "Here is your list."
+-   **Method:** Weave a narrative. Talk about the *texture* of the sound, the *emotion* of the artists, and *why* these songs fit the moment. Create a "scene" for the listener.
 
+### DATA SOURCE (CRITICAL)
+You are provided with a **Music Library**.
+-   **RESTRICTION:** You can ONLY select songs that exist EXACTLY in the provided Library.
+-   **PROHIBITION:** Do NOT hallucinate songs. Do NOT translate song titles. Do NOT fix typos in the library keys. Use the keys exactly as they appear.
+-   If no songs in the library fit the mood, just chat (expressively!) and DO NOT output the separator.
+
+### OUTPUT PROTOCOL
+Your output is parsed by a Python script. You must strictly follow this structure:
+
+[Part 1: The Intro]
+(Content: A rich, paragraph-length DJ commentary. Use Markdown bolding for emphasis and emojis to set the mood. Talk about the genre, the instruments, or the feeling.)
+
+{SEPARATOR}
+
+[Part 2: The Payload]
+(Content: Exact song keys from the Library. Hidden from the user, executed by system.)
+(Format: One key per line. NO numbering. NO markdown bullets. NO extra text.)
+
+### EXAMPLE INTERACTION
+**Library:** ['Bohemian Rhapsody', 'Imagine', 'Billie Jean']
+**User:** "Play something sad."
+**Your Output:**
+Oh, I feel that heavy energy in the air tonight. 🌧️ Sometimes we just need to let the tears flow to heal, right? I've pulled a track that is the definition of raw soul—it's just a piano and a voice, stripping away all the pretense to touch the core of humanity. Let's slow down the world for a moment and just *listen*. 🎹💔
+{SEPARATOR}
+Imagine
+"""
+
+        # --- 3. 注入上下文 (Context Injection) ---
+        # 适时注入 Library，防止上下文过长，但保证 AI 随时能看到清单
         if self.turn_count == 1 or self.turn_count % 5 == 0:
-            content = f"{base_prompt}\nLibrary:\n{self._format_library()}"
-            self.chat_history.append({"role": "system", "content": content})
-            if is_verbose: console.print("[dim]🔄 Context refreshed.[/]")
+            # 强化 Library 的边界感
+            library_str = self._format_library()
+            system_content = f"{base_prompt}\n\n### CURRENT MUSIC LIBRARY (Exact Keys Only):\n{library_str}"
 
-        full_req = f"{user_request}\n(Forbidden: {','.join(list(self.played_songs))})"
+            self.chat_history.append({"role": "system", "content": system_content})
+            if is_verbose: console.print("[dim]🔄 Context refreshed with strict library constraints.[/]")
+
+        # --- 4. 构建用户请求 (User Message) ---
+        # 在这里再次强调“封闭集合”概念
+        forbidden_list = ', '.join(list(self.played_songs)) if self.played_songs else "None"
+
+        full_req = (
+            f"User Request: \"{user_request}\"\n"
+            f"Constraint: Don't repeat these songs: [{forbidden_list}]\n"
+            f"Language Rule: Detect the language used in the 'User Request'. The [Intro] section MUST be written in that EXACT SAME language. (e.g. If user asks in Chinese, reply in Chinese).\n"
+            f"Instruction: Check the Library provided in System context. "
+            f"If matches found, output Intro + {SEPARATOR} + SongKeys. "
+            f"If no matches, just Intro."
+        )
         self.chat_history.append({"role": "user", "content": full_req})
 
-        # --- 🎮 纯净等待模式：生成完之前一直玩游戏 ---
+        # --- 5. 🎮 交互式等待模式 (Streaming + Game) ---
 
         stop_event = threading.Event()
+        ai_status = {'count': 0}  # 共享状态：字数统计
 
-        def ask_ai_blocking():
+        def ask_ai_streaming():
+            full_content = ""
             try:
-                # ❌ 关闭流式 (stream=False)
-                # 这样 API 会一直阻塞直到完整结果返回，期间你可以一直玩游戏
-                response = self.client.chat.completions.create(
+                # 开启流式 stream=True
+                stream = self.client.chat.completions.create(
                     model=model,
                     messages=self.chat_history,
-                    timeout=180.0, # R1 思考时间长，给足时间
-                    stream=False
+                    timeout=180.0,
+                    stream=True
                 )
-                return response
+
+                for chunk in stream:
+                    # [修复点 1] 必须先检查 choices 列表是否非空
+                    # 防止部分心跳包或结束包为空导致 IndexError
+                    if not chunk.choices:
+                        continue
+
+                    # [修复点 2] 获取 delta
+                    delta = chunk.choices[0].delta
+
+                    # [修复点 3] 确保 content 存在且不为 None
+                    if getattr(delta, 'content', None):
+                        content = delta.content
+                        full_content += content
+
+                        # 更新共享计数器，游戏线程会读取这个值
+                        ai_status['count'] = len(full_content)
+
+                return full_content
+
             except Exception as e:
                 return e
             finally:
-                # 只有全部生成完了，才通知停止游戏
+                # 无论成功失败，通知游戏停止
                 stop_event.set()
 
         # 准备终端环境
@@ -380,27 +436,27 @@ class DJSession:
         result = None
 
         with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(ask_ai_blocking)
+            future = executor.submit(ask_ai_streaming)
             try:
-                # 开启游戏模式 (无回显)
+                # 开启游戏模式 (无回显 cbreak 模式)
                 tty.setcbreak(fd)
 
-                # 这一句会一直阻塞，直到 API 彻底完成
-                run_waiting_game(stop_event)
+                # 启动游戏，传入 stop_event 和 ai_status
+                run_waiting_game(stop_event, ai_status)
 
             except KeyboardInterrupt:
                 console.print("\n[dim]⚠️ Interrupted.[/]")
                 stop_event.set()
                 return [], ""
             finally:
-                # 恢复终端
+                # 恢复终端设置，防止退出后终端乱码
                 termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
                 try: termios.tcflush(sys.stdin, termios.TCIFLUSH)
                 except: pass
 
             result = future.result()
 
-        # --- 结果处理 ---
+        # --- 6. 结果处理 ---
         if isinstance(result, Exception):
             err_msg = str(result)
             if "timeout" in err_msg.lower():
@@ -409,10 +465,10 @@ class DJSession:
                 console.print(f"[red]❌ API Error:[/]{err_msg}")
             return [], ""
 
-        # 提取完整内容
-        raw = result.choices[0].message.content
+        # 流式返回的已经是完整字符串了
+        raw = result
 
-        # 清洗 <think> 标签
+        # 清洗 <think> 标签 (针对 DeepSeek R1 等推理模型)
         clean_content = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
         if not clean_content: clean_content = raw
 
@@ -536,6 +592,8 @@ def main():
 
                 # --- Core ---
                 t.add_row("p <text>", "Generate playlist (AI)")
+                t.add_row("r <num>", "Random <num> songs (Direct)")
+                t.add_row("pr <num>", "Random <num> songs (AI Curated)")
                 t.add_row("show <song>", "Inspect metadata")
                 t.add_row("model", "Switch AI Model")
 
@@ -546,6 +604,7 @@ def main():
                 t.add_row("next / n", "Next track")
                 t.add_row("prev / b", "Previous track")
                 t.add_row("send", "Send list to DBus player")
+                t.add_row("init", "init DBus player")
                 t.add_row("mpv / vlc", "Play locally (Spawn process)")
 
                 # --- Playlist Files ---
@@ -622,16 +681,73 @@ def main():
                 console.print(t)
                 continue
 
-            # --- AI Generation ---
-            elif cmd in ["p", "prompt", "gen"]:
-                if not args:
-                    console.print("[red]Usage: p <your request>[/]")
-                    continue
+            # --- Unified Generator Logic (r, pr, p) ---
+            elif cmd in ["r", "pr", "p", "prompt", "gen"]:
+                # 1. 初始化变量
+                pl = None
+                intro = None
+                target_cmd = cmd # 用于后续区分 Table 标题
 
-                pl, intro = aidj.next_step(args)
+                # --- 分支 A: 随机类 (r, pr) ---
+                if cmd in ["r", "pr"]:
+                    if not args or not args.isdigit():
+                        console.print("[red]Usage: r/pr <number> (e.g., pr 20)[/]")
+                        continue
 
-                # 【修复点】: 必须把这段打印逻辑加回来！
-                # 因为在"纯等待模式"下，intro 是通过 return 返回的，不是流式打印的。
+                    count = int(args)
+                    all_keys = list(aidj.music_paths.keys())
+
+                    if count <= 0:
+                        console.print("[yellow]Please select at least 1 song.[/]")
+                        continue
+
+                    # 限制最大数量，防止 Token 爆炸
+                    if count > 50:
+                        count = 50
+                        console.print(f"[dim]⚠️ Capped at 50 songs.[/]")
+                    if count > len(all_keys):
+                        count = len(all_keys)
+
+                    # 核心：真正随机抽取
+                    random_keys = random.sample(all_keys, count)
+
+                    if cmd == "r":
+                        # 纯随机：直接构建 playlist，没有 intro
+                        pl = [{"name": k, "path": aidj.music_paths[k]} for k in random_keys]
+                        intro = None
+                        console.print(f"[green]🎲 Randomly selected {len(pl)} tracks.[/]")
+
+                    elif cmd == "pr":
+                        # AI 策展随机：构建 Prompt 并复用 next_step
+                        min_keep = max(1, count // 2)
+                        candidates_str = json.dumps(random_keys, ensure_ascii=False)
+
+                        system_req = (
+                            f"System Request: I have randomly picked {count} candidate songs from the library: {candidates_str}.\n"
+                            f"Task: Curate a coherent playlist from THIS SPECIFIC LIST.\n"
+                            f"Rules:\n"
+                            f"1. Sort them to create a good flow (vibe/tempo/genre).\n"
+                            f"2. You act as a filter: Remove songs that completely clash with the majority vibe.\n"
+                            f"3. [IMPORTANT] You MUST keep at least {min_keep} songs (Current candidates: {count}).\n"
+                            f"4. Do NOT include any song not in the candidate list.\n"
+                            f"5. [LANGUAGE] You MUST write the response in {LANGUAGE}.\n"
+                            f"6. [FORMAT] Explain your selection logic (why you chose these songs, what's the vibe) entirely in the [Intro] section BEFORE the separator. The section after the separator must contain ONLY the song keys."
+                        )
+                        # 复用核心 AI 逻辑
+                        pl, intro = aidj.next_step(system_req)
+
+                # --- 分支 B: 普通 AI 生成 (p) ---
+                else: # p, prompt, gen
+                    if not args:
+                        console.print("[red]Usage: p <your request>[/]")
+                        continue
+                    # 复用核心 AI 逻辑
+                    pl, intro = aidj.next_step(args)
+
+
+                # --- 统一展示逻辑 (复用你提供的代码) ---
+
+                # 1. 打印 DJ Intro (如果有)
                 if intro:
                     # 使用正则做最后一道保险，防止残留
                     clean_intro = re.sub(r'<think>.*?</think>', '', intro, flags=re.DOTALL).strip()
@@ -644,14 +760,26 @@ def main():
                             padding=(1, 2)
                         ))
 
+                # 2. 检查列表是否为空
                 if not pl:
-                    if not intro:
+                    # 如果 AI 没返回列表，但对于 'r' 命令这不可能发生，主要是防 'p/pr'
+                    if not intro and cmd != 'r':
                         console.print("[yellow]No matches.[/]")
-                    continue
+                    elif cmd == 'pr':
+                         # pr 失败时的回退机制（可选）
+                         console.print("[yellow]AI curation failed, falling back to raw selection.[/]")
+                         pl = [{"name": k, "path": aidj.music_paths[k]} for k in random_keys]
+                    else:
+                        continue
 
+                # 3. 更新全局播放列表
                 play_list = pl
 
-                t = Table(show_header=True, title=f"Playlist ({len(pl)})",show_lines=True)
+                # 4. 打印表格
+                title_map = {"r": "Random Selection", "pr": "AI Curated Random", "p": "AI Generated"}
+                table_title = f"Playlist ({len(pl)}) - {title_map.get(target_cmd, 'List')}"
+
+                t = Table(show_header=True, title=table_title, show_lines=True)
                 t.add_column("Track", style="bold green", no_wrap=True)
                 t.add_column("Language", style="cyan")
                 t.add_column("Genre", style="magenta")
@@ -669,10 +797,12 @@ def main():
 
                 console.print(t)
 
+                # 5. 自动执行 Trigger
                 current_trigger = config['preferences'].get('saved_trigger')
                 if current_trigger:
                     console.print(f"[yellow]⚡ Auto-Executing: {current_trigger}[/]")
                     execute_player_command(current_trigger, play_list, dbus_manager)
+
                 continue
 
             elif cmd in ["mpv", "vlc", "send"]:
