@@ -1,6 +1,6 @@
-openai>=1.0.0
+openai
 requests
-rich
-questionary
 tqdm
 rapidfuzz
+rich
+questionary

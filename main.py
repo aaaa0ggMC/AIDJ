@@ -320,7 +320,7 @@ class DJSession:
 
     def next_step(self, user_request):
         # 1. 准备请求
-        user_request = f"[USER]：{user_request}\n\n[SYSTEM]：Check the library. If you find matching songs, use {SEPARATOR} to list them. If the user just wants to chat or NO songs match, DO NOT use the separator, just talk."
+        user_request = f"[USER]：{user_request}\n\n[SYSTEM]：Check the library. If you find matching songs, use {SEPARATOR} to list them. If the user just wants to chat or NO songs match, DO NOT use the separator, just talk.SONG LIST中的歌曲是给系统看的不是给用户看的，因此你必须遵守格式！不要加入额外的东西。"
 
         self.turn_count += 1
         model = self.config['preferences']['model']
