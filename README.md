@@ -24,14 +24,14 @@
 # 支持的功能 🚀🔥
 
 * 🗣️ **自然语言交互**：不再是死板的搜索框！你可以说 *"来点适合半夜三更偷偷eemo的歌，像 'it's 6pm...' 那种感觉"*，AI 瞬间懂你。
-* 🧠 **DeepSeek 强力驱动**：支持 `deepseek-chat` (V3) 和 `deepseek-reasoner` (R1) 模型切换，不仅推荐歌，还能陪你聊聊选曲逻辑。
+* 🧠 **AI随心选**：支持自己设置endpoint然后选择AI。
 * 📂 **本地私有曲库**：扫描你硬盘里的 `.mp3`, `.flac`，保护隐私，拒绝版权变灰，只有你拥有的歌才会被播放。
 * 📊 **元数据自动补全**：新歌入库？系统会自动调用 NCM API 获取歌词，丢给 AI 分析出 **流派 (Genre)**、**情绪 (Emotion)** 和 **语言** 并缓存。
 * 🎨 **工业级 TUI 界面**：基于 `Rich` 库打造，漂亮的表格、进度条、Emoji，看着就赏心悦目。
 * 🔍 **Rapidfuzz 模糊匹配**：AI 记不清歌名全称？拼写错误？没关系，强力模糊匹配算法能精准找到你想听的那首。
 * 🕹️ **播放器控制**：支持 `mpv` 和 `vlc`，通过 DBus 协议无缝控制，后台静默播放，不抢终端焦点。
 * ⚡ **持久化 Trigger**：可以设置自动触发器，生成歌单后自动推送到播放器，解放双手。
-
+* O 等待的时候还能玩游戏* : 如果数据量大，第一次chat可能需要45s左右，你可以玩/看一些小游戏从而打发时间
 ---
 
 # 前置要求 🛠️
@@ -44,9 +44,17 @@
 ---
 
 # 运行截图
+歌单推荐
 ![歌单推荐](./screenshots/1.png)
+启动时截图
 ![启动时截图](./screenshots/2.png)
+和AIDJ对话
 ![和AIDJ对话](./screenshots/3.png)
+## 新版本截图
+等待中
+![等待中](./screenshots/waiting.png)
+完成
+![完成](./screenshots/finished.png)
 
 
 # 构建 🏗️
@@ -78,7 +86,21 @@ uv pip install -r requirements.txt
         "本地音乐库地址"
     ],
     "secrets": {
-        "deepseek": "你的DS API密钥"
+        "deepseek": "你的API密钥"
+    },
+    "ai_settings": {
+        "base_url": "你选择的endpoint",
+        "available_models": [
+            "deepseek/deepseek-v3.2",
+            "deepseek/deepseek-r1-turbo",
+            "deepseek/deepseek-r1-0528",
+            "moonshotai/kimi-k2-thinking",
+            "minimax/minimax-m2",
+            "zai-org/glm-4.7",
+            "一堆模型，可以通过/model打开tui然后切换chat_model"
+        ],
+        "metadata_model": "deepseek/deepseek-v3.2",
+        "chat_model": "deepseek/deepseek-r1-turbo"
     },
     "preferences": {
         "model": "deepseek-reasoner",
