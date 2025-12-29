@@ -39,7 +39,7 @@ class Game:
             self.enemies.append((0, ex))
         
         # Move Enemies (slower)
-        if step % 4 == 0:
+        if step % 16 == 0:
             self.enemies = [(y+1, x) for y, x in self.enemies]
 
         # Collision

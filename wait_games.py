@@ -8,6 +8,7 @@ import pkgutil
 from rich.live import Live
 from rich.panel import Panel
 from rich.align import Align
+import tty
 
 # --- 🎮 输入监听核心 (通用) ---
 class InputHandler:
@@ -44,6 +45,9 @@ def load_game(game_name):
 
 # --- 核心运行逻辑 ---
 def run_waiting_game(stop_event, ai_status=None):
+    # 阻止回显
+    tty.setcbreak(sys.stdin.fileno())
+    
     # 1. 获取游戏列表
     available_games = get_all_games()
 
