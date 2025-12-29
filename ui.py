@@ -90,3 +90,7 @@ def print_active_players(players, preferred_target):
         marker = " [green](Target)[/]" if preferred_target and preferred_target in p else ""
         t.add_row(f"{p}{marker}")
     console.print(t)
+
+def print_action_feedback(message, style="green"):
+    """轻量级操作反馈"""
+    console.print(f"[{style}]✔ {message}[/]")

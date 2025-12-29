@@ -5,6 +5,7 @@ from log import *
 CONFIG_PATH = "./config.json"
 METADATA_PATH = "./music_metadata.json"
 PLAYLIST_DIR = "./playlists"
+LYRICS_DIR = "./lyrics"
 MUSIC_EXTS = ('.mp3', '.flac', '.wav', '.m4a')
 NCM_BASE_URL = "http://localhost:3000"
 CFG_KEY_MF = "music_folders"

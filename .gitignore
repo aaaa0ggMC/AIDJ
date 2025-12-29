@@ -12,3 +12,5 @@ wheels/
 config.json
 music_metadata.json
 MetaBackup
+lyrics
+.dj_history
