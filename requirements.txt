@@ -4,3 +4,4 @@ tqdm
 rapidfuzz
 rich
 questionary
+zhconv
