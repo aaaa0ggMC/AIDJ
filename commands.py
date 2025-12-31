@@ -15,6 +15,11 @@ from config import save_config, PLAYLIST_DIR, SEPARATOR, LANGUAGE, LYRICS_DIR, N
 from player import execute_player_command
 from command_handler import registry, console, Context
 import ui
+import threading
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import time
+from collections import deque
 
 # --- Helper Logic ---
 def _update_playlist_and_trigger(ctx: Context, new_playlist, intro, title_desc):
@@ -682,3 +687,137 @@ def cmd_dlyrics(ctx: Context, *args):
     # 退出 Live 后，如果是 immersive，屏幕会自动切回来，无需手动 clean
     if not is_immersive:
         console.print("[yellow]👋 Lyrics mode exited.[/]")
+
+@registry.register("pc")
+def cmd_pc(ctx: Context, *args):
+    """
+    Continuous AI DJ Mode (Pure Controller).
+    - Features: 100-song Rolling Memory, Context Pruning.
+    - Logic: Dynamic Prompt (Batch #1: Request -> Batch #2+: Sequence Flow).
+    - Requirement: Min 8 tracks per batch.
+    - UI: English, silent mode (no DJ commentary), real-time char count.
+    """
+    if not args:
+        console.print("[red]Usage: pc <prompt>[/]")
+        return
+
+    user_prompt = " ".join(args)
+
+    # --- 1. State & Rolling Memory ---
+    buffer = []
+    current_queue = []
+    # 内部维护 deque，确保 100 首滚动
+    rolling_history = deque(list(ctx.aidj.played_songs), maxlen=100)
+
+    pc_status = {'count': 0, 'working': False}
+    stop_event = threading.Event()
+    fetch_count = 0
+
+    # --- 2. Suspend Injectors (Disable Games) ---
+    original_injects = ctx.aidj.wait_injects[:]
+    ctx.aidj.wait_injects = [None, None, None]
+
+    # --- 3. AI Task: Dynamic Batch Fetching ---
+    def fetch_next_batch():
+        nonlocal fetch_count
+        pc_status['working'] = True
+        pc_status['count'] = 0
+        try:
+            # Context Pruning (Keep last 10 messages)
+            if len(ctx.aidj.chat_history) > 10:
+                ctx.aidj.chat_history = ctx.aidj.chat_history[-10:]
+
+            # 将内部 deque 赋值给 dj session 对象，供 next_step 内部解析使用
+            ctx.aidj.played_songs = set(rolling_history)
+
+            # --- Dynamic Prompt Evolution ---
+            if fetch_count == 0:
+                # 第一轮：侧重用户初始需求
+                phase_instruction = (
+                    f"### PHASE 1: INITIAL REQUEST\n"
+                    f"User Goal: '{user_prompt}'\n"
+                    f"Target: At least 8 tracks matching this mood."
+                )
+            else:
+                # 后续轮次：侧重基于播放顺序的智能联想
+                last_tracks = list(rolling_history)[-15:]
+                phase_instruction = (
+                    f"### PHASE {fetch_count + 1}: AUTONOMOUS RADIO FLOW\n"
+                    f"Recent Sequence: [{', '.join(last_tracks)}]\n"
+                    f"Task: Ignore the initial prompt. Based on the sequence above, "
+                    f"predict and curate the next logical musical chapter (at least 8 tracks)."
+                )
+
+            full_prompt = (
+                f"{phase_instruction}\n\n"
+                f"**STRICT RULES:**\n"
+                f"1. OUTPUT AT LEAST 8 TRACKS FROM THE LIBRARY.\n"
+                f"2. Forbidden (Rolling 100): [{', '.join(list(rolling_history))}].\n"
+                f"3. Genre Shifting: If matches run out, gradually transition to a complementary vibe.\n"
+                f"4. Use EXACT library keys. NO hallucination."
+            )
+
+            # 这里的 external_status 会解决字符计为 0 的问题
+            pl, _ = ctx.aidj.next_step(full_prompt, external_status=pc_status)
+
+            if pl:
+                buffer.append(pl) # 仅存歌单，不存 Intro
+                for s in pl:
+                    rolling_history.append(s['name'])
+                fetch_count += 1
+        except Exception:
+            pass
+        finally:
+            pc_status['working'] = False
+
+    def make_pc_panel():
+        p_status = ctx.dbus.get_status()
+        track = ctx.dbus.get_current_track_name()
+
+        content = [
+            f"[bold cyan]🎯 Initial Goal:[/][white] {user_prompt}[/]",
+            f"[bold green]🚦 Player Status:[/][yellow] {p_status}[/]",
+            f"[bold magenta]🎵 Now Playing:[/][white] {track}[/]",
+            "---",
+            f"📦 Queue: [bold]{len(current_queue)}[/] | Batch Buffer: [bold]{len(buffer)}/2[/]",
+            f"🧠 AI Engine: {'[blink orange1]THINKING...[/]' if pc_status['working'] else '[dim]IDLE[/]'}",
+            f"📝 Progress: [bold green]{pc_status['count']}[/] chars | Round: #{fetch_count + 1}",
+            f"💾 Memory: [bold]{len(rolling_history)}[/]/100 tracks"
+        ]
+        return Panel("\n".join(content), title="📻 AI DJ CONTINUOUS STUDIO", border_style="blue")
+
+    # --- 4. Main Loop ---
+    console.print("[bold green]>>> PC Mode Activated. (Rolling Memory & Dynamic Prompting)[/]")
+
+    with Live(make_pc_panel(), refresh_per_second=4, transient=True) as live:
+        try:
+            while not stop_event.is_set():
+                # Producer
+                if len(buffer) < 2 and not pc_status['working']:
+                    threading.Thread(target=fetch_next_batch, daemon=True).start()
+
+                # Consumer
+                status = ctx.dbus.get_status()
+                if status in ["Stopped", "Finished", "Unknown"]:
+                    if current_queue:
+                        next_track = current_queue.pop(0)
+                        ctx.dbus.send_files([next_track['path']])
+                        time.sleep(2)
+                    elif buffer:
+                        current_queue = buffer.pop(0) # 直接加载歌单，无 DJ Intro 打印
+                    else:
+                        if not pc_status['working']:
+                            threading.Thread(target=fetch_next_batch, daemon=True).start()
+
+                live.update(make_pc_panel())
+                time.sleep(0.5)
+
+        except KeyboardInterrupt:
+            # 捕获 Ctrl+C 后设置事件，让循环退出
+            stop_event.set()
+        finally:
+            # --- 5. Cleanup & Suppress Shutdown Error ---
+            ctx.aidj.wait_injects = original_injects
+            console.print("\n[yellow]🛑 PC Mode Exited. Restoring CLI...[/]")
+            # 注意：这里不直接 return，而是让函数自然结束。
+            # 如果你依然遇到报错，可以在这里强制 os._exit(0)

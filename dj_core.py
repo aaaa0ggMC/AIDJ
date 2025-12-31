@@ -14,7 +14,7 @@ def get_song_info(client, song_info, model_name):
         response = client.chat.completions.create(
             model=model_name,
             messages=[
-                {"role": "system", "content": "提取歌曲信息JSON: language, emotion, genre, loudness, review (20字以内)"},
+                {"role": "system", "content": "提取歌曲信息JSON: language, emotion, genre, loudness, review"},
                 {"role": "user", "content": f"{song_info}"}
             ],
             response_format={'type': 'json_object'},
@@ -129,7 +129,7 @@ class DJSession:
 
         return playlist, intro_text
 
-    def next_step(self, user_request):
+    def next_step(self, user_request,external_status = None):
         # --- 1. 配置与状态更新 ---
         self.turn_count += 1
         model = self.config['preferences']['model']
@@ -139,7 +139,7 @@ class DJSession:
 
         # --- 2. 构建系统指令 (System Prompt - Optimized) ---
         # 使用“协议模式”告诉AI，它正在通过一个严格的管道传输数据
-        base_prompt = base_prompt = f"""
+        base_prompt = f"""
 ### ROLE DEFINITION
 You are a **charismatic, knowledgeable, and expressive AI Radio Host**.
 Your goal is not just to list songs, but to **curate an experience**.
@@ -201,7 +201,7 @@ Imagine
         # --- 5. 🎮 交互式等待模式 (Streaming + Game) ---
 
         stop_event = threading.Event()
-        ai_status = {'count': 0}  # 共享状态：字数统计
+        ai_status = external_status if external_status is not None else {'count': 0}  # 共享状态：字数统计
 
         def ask_ai_streaming():
             full_content = ""

@@ -65,6 +65,36 @@ class DBusManager:
         if self._run_cmd(cmd) is not None:
             return True, f"Executed {command} on {name}"
         return False, "Command Failed"
+    
+    def get_status(self):
+        """获取当前播放器状态 (PlaybackStatus)"""
+        dest, name = self.get_active_player()
+        if not dest: return "Unknown"
+        # 使用 dbus-send 获取属性
+        cmd = ["dbus-send", "--session", "--type=method_call", "--print-reply",
+               f"--dest={dest}", "/org/mpris/MediaPlayer2",
+               "org.freedesktop.DBus.Properties.Get",
+               "string:org.mpris.MediaPlayer2.Player", "string:PlaybackStatus"]
+        output = self._run_cmd(cmd)
+        if output and 'variant' in output:
+            # 解析输出中的 "Playing", "Paused" 或 "Stopped"
+            match = re.search(r'string "(\w+)"', output)
+            return match.group(1) if match else "Stopped"
+        return "Stopped"
+
+    def get_current_track_name(self):
+        """Fetch the actual track title from DBus metadata."""
+        dest, _ = self.get_active_player()
+        if not dest: return "None"
+        cmd = ["dbus-send", "--session", "--type=method_call", "--print-reply",
+               f"--dest={dest}", "/org/mpris/MediaPlayer2",
+               "org.freedesktop.DBus.Properties.Get",
+               "string:org.mpris.MediaPlayer2.Player", "string:Metadata"]
+        output = self._run_cmd(cmd)
+        if output:
+            match = re.search(r'string "xesam:title"\s+variant\s+string "([^"]+)"', output)
+            return match.group(1) if match else "Unknown Track"
+        return "None"
 
 def execute_player_command(command, playlist, dbus_manager):
     if command in ["next", "prev", "play", "pause", "toggle", "stop"]:
