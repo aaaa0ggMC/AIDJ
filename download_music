@@ -1,0 +1,2 @@
+#!/bin/bash
+uv run pyncm --load $HOME/AIPlayer/ncm_info -o ../../CChaos/Musics --lyric-no "lrc tlyric romalrc yrc" --quality exhigh $*

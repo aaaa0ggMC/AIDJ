@@ -1,11 +1,14 @@
 import sys
 import openai
 import termios
+import json
+import os
 import questionary
 # [新增] 引入 Completer 接口
 from prompt_toolkit.completion import WordCompleter, Completer 
 from prompt_toolkit.history import FileHistory
 from questionary import Style
+from datetime import datetime
 
 # 引入模块
 from log import set_log_fn
@@ -21,6 +24,31 @@ import commands
 # --- Terminal Injection Helpers ---
 fd = sys.stdin.fileno()
 old_settings = None
+
+def log_command_to_history(user_input, file_path="history.jsonl"):
+    """
+    将用户命令以 JSONL 格式追加到本地文件中。
+    每行是一个独立的 JSON 对象，包含时间戳和命令内容。
+    """
+    # 过滤掉空输入或仅空格的输入
+    if not user_input or not user_input.strip():
+        return
+
+    # 构建单行记录对象
+    entry = {
+        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "cmd": user_input.strip()
+    }
+
+    try:
+        # 使用 'a' (append) 模式打开，如果文件不存在会自动创建
+        with open(file_path, 'a', encoding='utf-8') as f:
+            # ensure_ascii=False 保证中文命令不被转码为 \uXXXX
+            line = json.dumps(entry, ensure_ascii=False)
+            f.write(line + "\n")
+    except Exception as e:
+        # 记录日志报错，但不中断主程序运行
+        print(f"[Log Error] Failed to save history: {e}")
 
 def inject_pre():
     global old_settings
@@ -119,7 +147,9 @@ def main():
             if user_input is None: 
                 console.print("[bold red]👋 Bye![/]")
                 break
-                
+            
+            log_command_to_history(user_input)
+            
             registry.dispatch(user_input, ctx)
             
         except KeyboardInterrupt:
