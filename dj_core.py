@@ -30,6 +30,9 @@ def sync_metadata(client, targets, metadata, model_name):
     if not targets: return metadata
     log(f"[cyan]🚀 Syncing {len(targets)} new songs using {model_name}... (Ctrl+C to skip)[/]")
     pbar = tqdm(targets.items(), unit="song")
+
+    times = 0
+
     try:
         for name, path in pbar:
             pbar.set_postfix_str(f"{name[:10]}...")
@@ -45,11 +48,18 @@ def sync_metadata(client, targets, metadata, model_name):
 
                 if resp:
                     metadata[name] = json.loads(resp)
-                    with open(METADATA_PATH, "w") as f: json.dump(metadata, f, ensure_ascii=False, indent=4)
+                    times += 1
+                    if times % 5 == 0:
+                        times = 0
+                        with open(METADATA_PATH, "w") as f: json.dump(metadata, f, ensure_ascii=False, indent=4)
             except KeyboardInterrupt: raise
             except: continue
     except KeyboardInterrupt:
         log("\n[yellow]⚠️ Sync skipped.[/]")
+    
+    if times != 0:
+        with open(METADATA_PATH, "w") as f: json.dump(metadata, f, ensure_ascii=False, indent=4)
+
     return metadata
 
 class DJSession:
