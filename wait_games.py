@@ -24,7 +24,7 @@ class InputHandler:
                 key = sys.stdin.read(1).lower()
                 if key in ['\n', '\r']: return None
                 return key
-        except:
+        except (OSError, ValueError):
             pass
         return None
 
@@ -45,9 +45,17 @@ def load_game(game_name):
 
 # --- 核心运行逻辑 ---
 def run_waiting_game(stop_event, ai_status=None):
-    # 阻止回显
+    # 阻止回显，确保退出时恢复终端设置
+    import termios
+    old_tty = termios.tcgetattr(sys.stdin.fileno())
     tty.setcbreak(sys.stdin.fileno())
-    
+
+    try:
+        _run_waiting_game_inner(stop_event, ai_status)
+    finally:
+        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_tty)
+
+def _run_waiting_game_inner(stop_event, ai_status=None):
     # 1. 获取游戏列表
     available_games = get_all_games()
 

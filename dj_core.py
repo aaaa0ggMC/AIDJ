@@ -31,8 +31,6 @@ def sync_metadata(client, targets, metadata, model_name):
     log(f"[cyan]🚀 Syncing {len(targets)} new songs using {model_name}... (Ctrl+C to skip)[/]")
     pbar = tqdm(targets.items(), unit="song")
 
-    times = 0
-
     try:
         for name, path in pbar:
             pbar.set_postfix_str(f"{name[:10]}...")
@@ -47,18 +45,14 @@ def sync_metadata(client, targets, metadata, model_name):
                 resp = get_song_info(client, info, model_name)
 
                 if resp:
-                    metadata[name] = json.loads(resp)
-                    times += 1
-                    if times % 5 == 0:
-                        times = 0
-                        with open(METADATA_PATH, "w") as f: json.dump(metadata, f, ensure_ascii=False, indent=4)
+                    meta_dict = json.loads(resp)
+                    metadata[name] = meta_dict
+                    # 直接追加到 JSONL，不再频繁重写整个 JSON
+                    append_metadata_jsonl(name, meta_dict)
             except KeyboardInterrupt: raise
             except: continue
     except KeyboardInterrupt:
         log("\n[yellow]⚠️ Sync skipped.[/]")
-    
-    if times != 0:
-        with open(METADATA_PATH, "w") as f: json.dump(metadata, f, ensure_ascii=False, indent=4)
 
     return metadata
 
@@ -284,8 +278,9 @@ Imagine
         raw = result
 
         # 清洗 <think> 标签 (针对 DeepSeek R1 等推理模型)
-        clean_content = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
-        if not clean_content: clean_content = raw
+        # 先匹配完整的 <think>...</think>，再移除未闭合的 <think> 及其后续内容
+        clean_content = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL)
+        clean_content = re.sub(r'<think>.*', '', clean_content, flags=re.DOTALL).strip()
 
         if is_verbose:
             log(Panel(raw, title="Raw AI Output (With Thoughts)", border_style="dim"))

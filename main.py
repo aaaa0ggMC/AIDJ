@@ -113,6 +113,14 @@ def main():
     
     # 5. 构建 Context
     ctx = Context(aidj, dbus_manager, config)
+
+    # 5.1 如果 record_freq 已启用，加载频率数据
+    if config['preferences'].get('record_freq', False):
+        from config import load_frequency
+        ctx._freq = load_frequency()
+        console.print(f"[green]📊 Frequency tracking loaded ({len(ctx._freq)} songs)[/]")
+    else:
+        ctx._freq = None
     
     # 6. UI Banner
     ui.print_banner(base_url, config['preferences']['model'])
@@ -157,8 +165,9 @@ def main():
         except SystemExit:
             break
         except Exception as e:
+            import traceback
             console.print(f"[red]CRITICAL ERROR: {e}[/]")
-            # import traceback; traceback.print_exc()
+            traceback.print_exc()
 
 if __name__ == "__main__":
     main()

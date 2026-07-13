@@ -2,6 +2,7 @@ import re
 import subprocess
 import time
 import shutil
+import os
 from log import log
 
 class DBusManager:
@@ -92,8 +93,18 @@ class DBusManager:
                "string:org.mpris.MediaPlayer2.Player", "string:Metadata"]
         output = self._run_cmd(cmd)
         if output:
+            # Try xesam:title first (standard MPRIS field)
             match = re.search(r'string "xesam:title"\s+variant\s+string "([^"]+)"', output)
-            return match.group(1) if match else "Unknown Track"
+            if match:
+                return match.group(1)
+            # Fallback: extract filename from xesam:url
+            match = re.search(r'string "xesam:url"\s+variant\s+string "file://[^"]*?/([^/"]+)"', output)
+            if match:
+                filename = match.group(1)
+                # Remove extension
+                name, _ = os.path.splitext(filename)
+                return name
+            return "Unknown Track"
         return "None"
 
 def execute_player_command(command, playlist, dbus_manager):

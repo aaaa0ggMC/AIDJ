@@ -1,39 +1,37 @@
 import os
 import json
 import random
-import time
 import glob
 import dbus
 import re
-import requests 
+import requests
+import threading
+import time
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from rich.live import Live
 from rich.align import Align
 from rich.panel import Panel
 import questionary
 from rapidfuzz import process, fuzz
-from config import save_config, PLAYLIST_DIR, SEPARATOR, LANGUAGE, LYRICS_DIR, NCM_BASE_URL
+from config import save_config, PLAYLIST_DIR, SEPARATOR, LANGUAGE, LYRICS_DIR, NCM_BASE_URL, load_frequency, save_frequency, bump_frequency
 from player import execute_player_command
 from command_handler import registry, console, Context
 import ui
-import threading
-from concurrent.futures import ThreadPoolExecutor
-import threading
-import time
-from collections import deque
 
 # --- Helper Logic ---
 def _update_playlist_and_trigger(ctx: Context, new_playlist, intro, title_desc):
     """更新上下文中的播放列表，打印表格，并执行自动触发"""
     if intro:
         ui.print_dj_intro(intro)
-    
+
     if not new_playlist:
         if not intro: console.print("[yellow]No matches found.[/]")
         return
 
     # Update Global State
     ctx.play_list = new_playlist
-    
+
     # Print UI
     ui.print_playlist(new_playlist, ctx.aidj.metadata, title_desc)
 
@@ -42,6 +40,13 @@ def _update_playlist_and_trigger(ctx: Context, new_playlist, intro, title_desc):
     if trigger:
         console.print(f"[yellow]⚡ Auto-Executing: {trigger}[/]")
         execute_player_command(trigger, ctx.play_list, ctx.dbus)
+
+    # Record frequency (non-PC mode)
+    if ctx.config['preferences'].get('record_freq', False) and ctx._freq is not None:
+        song_names = [t['name'] for t in new_playlist]
+        if bump_frequency(ctx._freq, song_names):
+            save_frequency(ctx._freq)
+            console.print(f"[dim]📊 Updated frequency for {len(song_names)} tracks[/]")
 
 def _player_helper(ctx, cmd):
     """Player command wrapper"""
@@ -73,6 +78,24 @@ def cmd_verbose(ctx: Context, *args):
     save_config(ctx.config)
     ctx.aidj.config = ctx.config # Update instance config
     console.print(f"[green]📝 Verbose Mode: {not curr}[/]")
+
+@registry.register("record_freq")
+def cmd_record_freq(ctx: Context, *args):
+    """Toggle frequency recording (tracks song play counts)."""
+    curr = ctx.config['preferences'].get('record_freq', False)
+    ctx.config['preferences']['record_freq'] = not curr
+    save_config(ctx.config)
+    if not curr:
+        # 开启时加载频率数据到 ctx
+        if not hasattr(ctx, '_freq') or ctx._freq is None:
+            ctx._freq = load_frequency()
+        console.print(f"[green]📊 Frequency Recording: ON ({len(ctx._freq)} tracked)[/]")
+    else:
+        # 关闭时 flush 到文件
+        if hasattr(ctx, '_freq') and ctx._freq:
+            save_frequency(ctx._freq)
+            ctx._freq = None
+        console.print(f"[yellow]📊 Frequency Recording: OFF (saved)[/]")
 
 @registry.register("refresh")
 def cmd_refresh(ctx: Context, *args):
@@ -491,7 +514,34 @@ def _get_lyrics_data(title, artist):
     safe_name = re.sub(r'[\\/*?:"<>|]', "", f"{title} - {artist}".strip(" -"))
     fpath = os.path.join(LYRICS_DIR, f"{safe_name}.lrc")
 
-    # 1. 读缓存
+    # 1. 读缓存（精确匹配）
+    if os.path.exists(fpath):
+        with open(fpath, 'r', encoding='utf-8') as f:
+            return _parse_lrc(f.read())
+
+    # 2. 模糊匹配：尝试不同的文件名组合
+    title_safe = re.sub(r'[\\/*?:"<>|]', "", title.strip(" -"))
+    artist_safe = re.sub(r'[\\/*?:"<>|]', "", artist.strip(" -"))
+
+    # 按优先级尝试：
+    # 1. "title - artist.lrc"
+    candidate = os.path.join(LYRICS_DIR, f"{title_safe} - {artist_safe}.lrc")
+    if os.path.exists(candidate):
+        fpath = candidate
+    else:
+        # 2. 遍历目录找 "title*.lrc" 的匹配
+        for f in os.listdir(LYRICS_DIR):
+            if not f.endswith(".lrc"):
+                continue
+            # 尝试 "title.lrc"
+            if f == f"{title_safe}.lrc":
+                fpath = os.path.join(LYRICS_DIR, f)
+                break
+            # 尝试 "title - X.lrc"（X 是任意 artist）
+            if f.startswith(f"{title_safe} - ") and f.endswith(".lrc"):
+                fpath = os.path.join(LYRICS_DIR, f)
+                break
+
     if os.path.exists(fpath):
         with open(fpath, 'r', encoding='utf-8') as f:
             return _parse_lrc(f.read())
@@ -515,7 +565,8 @@ def _get_lyrics_data(title, artist):
         with open(fpath, 'w', encoding='utf-8') as f:
             f.write(raw)
         return _parse_lrc(raw)
-    except Exception:
+    except (requests.RequestException, ValueError, KeyError) as e:
+        console.print(f"[dim]⚠️ Lyrics fetch failed for '{title}': {e}[/]")
         return []
 
 # --- Lyrics Command ---
@@ -528,7 +579,6 @@ def cmd_dlyrics(ctx: Context, *args):
     """
     import bisect
     from rich.markdown import Markdown
-    from rich.align import Align # 确保引入 Align
 
     # --- 0. 参数解析 (处理 immersive) ---
     args_list = [str(a).lower() for a in args]
@@ -599,7 +649,14 @@ def cmd_dlyrics(ctx: Context, *args):
                         break
 
                     # 提取信息
-                    title = str(meta.get("xesam:title", "Unknown Title"))
+                    title = str(meta.get("xesam:title", ""))
+                    if not title or title == "Unknown Title":
+                        # Fallback: extract title from xesam:url (VLC doesn't provide xesam:title)
+                        url = str(meta.get("xesam:url", ""))
+                        if url.startswith("file://"):
+                            title = os.path.splitext(os.path.basename(url))[0]
+                        if not title:
+                            title = "Unknown Title"
                     artist_list = meta.get("xesam:artist", ["Unknown Artist"])
                     artist = str(artist_list[0]) if (isinstance(artist_list, (list, dbus.Array)) and len(artist_list) > 0) else str(artist_list)
                     curr_key = f"{title}-{artist}"
@@ -710,8 +767,10 @@ def cmd_pc(ctx: Context, *args):
     rolling_history = deque(list(ctx.aidj.played_songs), maxlen=100)
 
     pc_status = {'count': 0, 'working': False}
+    fetch_lock = threading.RLock()  # 防止重复 spawn fetch 线程（可重入锁）
     stop_event = threading.Event()
     fetch_count = 0
+    pc_freq_count = 0  # PC 模式下的切歌计数，用于批量 flush
 
     # --- 2. Suspend Injectors (Disable Games) ---
     original_injects = ctx.aidj.wait_injects[:]
@@ -720,15 +779,19 @@ def cmd_pc(ctx: Context, *args):
     # --- 3. AI Task: Dynamic Batch Fetching ---
     def fetch_next_batch():
         nonlocal fetch_count
-        pc_status['working'] = True
+        with fetch_lock:
+            if pc_status['working']:
+                return
+            pc_status['working'] = True
         pc_status['count'] = 0
         try:
             # Context Pruning (Keep last 10 messages)
-            if len(ctx.aidj.chat_history) > 10:
-                ctx.aidj.chat_history = ctx.aidj.chat_history[-10:]
+            with fetch_lock:
+                if len(ctx.aidj.chat_history) > 10:
+                    ctx.aidj.chat_history = ctx.aidj.chat_history[-10:]
 
-            # 将内部 deque 赋值给 dj session 对象，供 next_step 内部解析使用
-            ctx.aidj.played_songs = set(rolling_history)
+                # 将内部 deque 赋值给 dj session 对象，供 next_step 内部解析使用
+                ctx.aidj.played_songs = set(rolling_history)
 
             # --- Dynamic Prompt Evolution ---
             if fetch_count == 0:
@@ -765,8 +828,8 @@ def cmd_pc(ctx: Context, *args):
                 for s in pl:
                     rolling_history.append(s['name'])
                 fetch_count += 1
-        except Exception:
-            pass
+        except Exception as e:
+            console.print(f"[red]⚠️ PC fetch error: {e}[/]")
         finally:
             pc_status['working'] = False
 
@@ -789,10 +852,11 @@ def cmd_pc(ctx: Context, *args):
     # --- 4. Main Loop ---
     console.print("[bold green]>>> PC Mode Activated. (Rolling Memory & Dynamic Prompting)[/]")
 
-    with Live(make_pc_panel(), refresh_per_second=4, transient=True) as live:
+    # Pass console=console so Rich renders concurrent console.print() above the Live panel
+    with Live(make_pc_panel(), console=console, transient=True) as live:
         try:
             while not stop_event.is_set():
-                # Producer
+                # Producer: fetch_lock inside fetch_next_batch prevents double-spawn
                 if len(buffer) < 2 and not pc_status['working']:
                     threading.Thread(target=fetch_next_batch, daemon=True).start()
 
@@ -802,9 +866,19 @@ def cmd_pc(ctx: Context, *args):
                     if current_queue:
                         next_track = current_queue.pop(0)
                         ctx.dbus.send_files([next_track['path']])
+
+                        # Record frequency on actual track switch (PC mode)
+                        if ctx.config['preferences'].get('record_freq', False) and ctx._freq is not None:
+                            bump_frequency(ctx._freq, [next_track['name']])
+                            pc_freq_count += 1
+                            # Flush every 10 tracks to minimize IO
+                            if pc_freq_count >= 10:
+                                save_frequency(ctx._freq)
+                                pc_freq_count = 0
+
                         time.sleep(2)
                     elif buffer:
-                        current_queue = buffer.pop(0) # 直接加载歌单，无 DJ Intro 打印
+                        current_queue = buffer.pop(0)
                     else:
                         if not pc_status['working']:
                             threading.Thread(target=fetch_next_batch, daemon=True).start()
@@ -813,11 +887,11 @@ def cmd_pc(ctx: Context, *args):
                 time.sleep(0.5)
 
         except KeyboardInterrupt:
-            # 捕获 Ctrl+C 后设置事件，让循环退出
-            stop_event.set()
+            pass
         finally:
-            # --- 5. Cleanup & Suppress Shutdown Error ---
+            stop_event.set()
             ctx.aidj.wait_injects = original_injects
+            # Flush remaining frequency changes before exit
+            if ctx.config['preferences'].get('record_freq', False) and ctx._freq is not None and pc_freq_count > 0:
+                save_frequency(ctx._freq)
             console.print("\n[yellow]🛑 PC Mode Exited. Restoring CLI...[/]")
-            # 注意：这里不直接 return，而是让函数自然结束。
-            # 如果你依然遇到报错，可以在这里强制 os._exit(0)

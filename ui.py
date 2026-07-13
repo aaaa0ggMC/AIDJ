@@ -34,15 +34,15 @@ def print_playlist(playlist, metadata, title_suffix="List"):
     t.add_column("Emotion", style="yellow")
     t.add_column("Loudness", style="dim")
 
+    def safe_fmt(val):
+        if val is None: return "-"
+        if isinstance(val, list): return ", ".join(str(x) for x in val)
+        return str(val)
+
     for item in playlist:
         name = item['name']
         info = metadata.get(name, {})
-        
-        def safe_fmt(val):
-            if val is None: return "-"
-            if isinstance(val, list): return ", ".join(str(x) for x in val)
-            return str(val)
-            
+
         t.add_row(
             name, 
             safe_fmt(info.get('language')), 

@@ -24,9 +24,9 @@ def log(data, *args, **kwargs):
         if args and isinstance(data, str):
             try:
                 data = data.format(*args)
-            except:
+            except (IndexError, KeyError):
                 pass  # 如果格式化失败，保持原样
-        
+
         # 调用当前日志函数
         _module._log_fn(data, *args, **kwargs)
     except Exception:
