@@ -107,6 +107,34 @@ class DBusManager:
             return "Unknown Track"
         return "None"
 
+    def get_volume(self):
+        """Get current player volume (0.0 - 1.0). Returns None on failure."""
+        dest, _ = self.get_active_player()
+        if not dest: return None
+        cmd = ["dbus-send", "--session", "--type=method_call", "--print-reply",
+               f"--dest={dest}", "/org/mpris/MediaPlayer2",
+               "org.freedesktop.DBus.Properties.Get",
+               "string:org.mpris.MediaPlayer2.Player", "string:Volume"]
+        output = self._run_cmd(cmd)
+        if output:
+            match = re.search(r'double ([\d.]+)', output)
+            if match:
+                return float(match.group(1))
+        return None
+
+    def set_volume(self, volume):
+        """Set player volume (0.0 - 1.0). Returns True on success."""
+        dest, _ = self.get_active_player()
+        if not dest: return False
+        vol = max(0.0, min(1.0, volume))
+        cmd = ["dbus-send", "--session", "--type=method_call",
+               f"--dest={dest}", "/org/mpris/MediaPlayer2",
+               "org.freedesktop.DBus.Properties.Set",
+               "string:org.mpris.MediaPlayer2.Player", "string:Volume",
+               f"variant:double:{vol}"]
+        result = self._run_cmd(cmd)
+        return result is not None
+
 def execute_player_command(command, playlist, dbus_manager):
     if command in ["next", "prev", "play", "pause", "toggle", "stop"]:
         ok, msg = dbus_manager.control(command)

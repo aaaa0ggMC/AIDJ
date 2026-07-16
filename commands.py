@@ -17,6 +17,7 @@ from rapidfuzz import process, fuzz
 from config import save_config, PLAYLIST_DIR, SEPARATOR, LANGUAGE, LYRICS_DIR, NCM_BASE_URL, load_frequency, save_frequency, bump_frequency
 from player import execute_player_command
 from command_handler import registry, console, Context
+from loudness import LoudnessCache
 import ui
 
 # --- Helper Logic ---
@@ -65,6 +66,53 @@ def cmd_help(ctx: Context, *args):
     """Show this help message."""
     registry.print_help()
 
+@registry.register("dhelp", "??")
+def cmd_dhelp(ctx: Context, *args):
+    """
+    Detailed help — renders external markdown documentation.
+
+    dhelp           → command index (help/index.md)
+    dhelp <command> → detailed doc for <command> (help/<command>.md)
+    """
+    from rich.markdown import Markdown
+    import os as _os, re as _re
+
+    help_dir = _os.path.join(_os.path.dirname(__file__), "help")
+
+    if not args:
+        target = _os.path.join(help_dir, "index.md")
+        title = "Command Reference"
+    else:
+        name = args[0].lower().strip()
+        target = _os.path.join(help_dir, f"{name}.md")
+        title = f"dhelp: {name}"
+
+    if not _os.path.isfile(target):
+        import glob as _glob
+        candidates = _glob.glob(_os.path.join(help_dir, "*.md"))
+        names = [_os.path.splitext(_os.path.basename(c))[0] for c in candidates]
+        console.print(f"[red]No help page for '{args[0]}'.[/]")
+        if names:
+            console.print(f"[dim]Available: {', '.join(sorted(names))}[/]")
+        console.print("[dim]Type [bold]dhelp[/] for the full index.[/]")
+        return
+
+    with open(target, "r", encoding="utf-8") as f:
+        raw = f.read()
+
+    # Convert [text](cmd:name) → **text** *(→ dhelp name)*  (Markdown native, Rich renders with color)
+    raw = _re.sub(
+        r'\[([^\]]+)\]\(cmd:([^)]+)\)',
+        r'**\1** *(→ dhelp \2)*',
+        raw
+    )
+
+    # Convert ## HEADING → bold heading with rule (avoids Rich's heading spacing)
+    raw = _re.sub(r'^## (.+)$', r'\n**\1**\n---', raw, flags=_re.MULTILINE)
+
+    md = Markdown(raw, justify="left")
+    console.print(Panel.fit(md, title=f"📖  {title}", border_style="cyan", padding=(1, 2)))
+
 @registry.register("status", "check", "conf")
 def cmd_status(ctx: Context, *args):
     """Show system configuration and status."""
@@ -96,6 +144,78 @@ def cmd_record_freq(ctx: Context, *args):
             save_frequency(ctx._freq)
             ctx._freq = None
         console.print(f"[yellow]📊 Frequency Recording: OFF (saved)[/]")
+
+@registry.register("adjmethod", "loudnorm")
+def cmd_adjmethod(ctx: Context, *args):
+    """Set volume adjustment strategy: linear (RMS) or lufs (ITU-R BS.1770 perceptual)."""
+    valid = {"linear", "lufs"}
+    current = ctx.config['preferences'].get('sound_adjust_method', 'lufs')
+
+    if not args:
+        console.print(f"[cyan]Current adjustment method: [bold]{current}[/][/]")
+        console.print("  [dim]linear[/] — RMS-based, fast, purely mathematical")
+        console.print("  [dim]lufs[/]   — ITU-R BS.1770 integrated loudness (K-weighted, human-ear model)")
+        console.print("Usage: adjmethod <linear|lufs>")
+        return
+
+    choice = args[0].lower()
+    if choice not in valid:
+        console.print(f"[red]Invalid method '{choice}'. Use: linear, lufs[/]")
+        return
+
+    ctx.config['preferences']['sound_adjust_method'] = choice
+    save_config(ctx.config)
+    labels = {"linear": "RMS (linear amplitude)", "lufs": "ITU-R BS.1770 LUFS (perceptual, K-weighted)"}
+    console.print(f"[green]🔊 Adjustment method: [bold]{choice}[/] — {labels[choice]}[/]")
+
+@registry.register("volcurve", "curve")
+def cmd_volcurve(ctx: Context, *args):
+    """
+    Set or view MPRIS volume curve compensation exponent.
+    Most players (mpv, VLC) warp MPRIS Volume non-linearly (cubic curve).
+    This applies inverse compensation so the target loudness is actually achieved.
+
+    curve=1.0 → linear passthrough (strict MPRIS spec players like deadbeef)
+    curve=3.0 → mpv / VLC default cubic compensation
+    """
+    current = ctx.config['preferences'].get('volume_curve', 3.0)
+
+    if not args:
+        console.print(f"[cyan]Current volume curve exponent: [bold]{current:.1f}[/][/]")
+        console.print("  [dim]1.0[/] — linear (MPRIS spec-compliant players)")
+        console.print("  [dim]2.0[/] — slight compensation")
+        console.print("  [dim]3.0[/] — mpv / VLC default cubic curve (recommended)")
+        console.print("Usage: volcurve <number>")
+        return
+
+    try:
+        val = float(args[0])
+    except ValueError:
+        console.print(f"[red]Invalid number: '{args[0]}'[/]")
+        return
+
+    if val < 0.5 or val > 5.0:
+        console.print("[red]Curve exponent should be between 0.5 and 5.0[/]")
+        return
+
+    ctx.config['preferences']['volume_curve'] = val
+    save_config(ctx.config)
+    console.print(f"[green]🔊 Volume curve exponent: [bold]{val:.1f}[/][/]")
+
+@registry.register("volbal", "balance")
+def cmd_volbal(ctx: Context, *args):
+    """Toggle dynamic volume balancing for PC mode (loudness normalization)."""
+    curr = ctx.config['preferences'].get('dynamic_balance_volume', False)
+    ctx.config['preferences']['dynamic_balance_volume'] = not curr
+    save_config(ctx.config)
+    if not curr:
+        console.print(
+            "[green]🔊 Dynamic Volume Balance: ON[/]\n"
+            "   Mode: RMS-based loudness normalization\n"
+            "   First track sets anchor @ 50% volume — use [bold]system volume[/] to adjust overall level."
+        )
+    else:
+        console.print("[yellow]🔊 Dynamic Volume Balance: OFF[/]")
 
 @registry.register("refresh")
 def cmd_refresh(ctx: Context, *args):
@@ -507,46 +627,55 @@ def _parse_lrc(lrc_text):
     lines.sort(key=lambda x: x[0])
     return lines
 
-def _get_lyrics_data(title, artist):
-    """获取歌词流程：文件缓存 -> API -> 文件保存"""
+def _get_lyrics_data(title, artist, file_url=None):
+    """获取歌词流程：音频文件名 -> 文件缓存 -> API -> 文件保存"""
+    from urllib.parse import unquote, urlparse
+
     if not os.path.exists(LYRICS_DIR): os.makedirs(LYRICS_DIR)
 
-    safe_name = re.sub(r'[\\/*?:"<>|]', "", f"{title} - {artist}".strip(" -"))
-    fpath = os.path.join(LYRICS_DIR, f"{safe_name}.lrc")
-
-    # 1. 读缓存（精确匹配）
-    if os.path.exists(fpath):
-        with open(fpath, 'r', encoding='utf-8') as f:
-            return _parse_lrc(f.read())
-
-    # 2. 模糊匹配：尝试不同的文件名组合
     title_safe = re.sub(r'[\\/*?:"<>|]', "", title.strip(" -"))
     artist_safe = re.sub(r'[\\/*?:"<>|]', "", artist.strip(" -"))
 
-    # 按优先级尝试：
-    # 1. "title - artist.lrc"
-    candidate = os.path.join(LYRICS_DIR, f"{title_safe} - {artist_safe}.lrc")
-    if os.path.exists(candidate):
-        fpath = candidate
-    else:
-        # 2. 遍历目录找 "title*.lrc" 的匹配
-        for f in os.listdir(LYRICS_DIR):
-            if not f.endswith(".lrc"):
-                continue
-            # 尝试 "title.lrc"
-            if f == f"{title_safe}.lrc":
-                fpath = os.path.join(LYRICS_DIR, f)
-                break
-            # 尝试 "title - X.lrc"（X 是任意 artist）
-            if f.startswith(f"{title_safe} - ") and f.endswith(".lrc"):
-                fpath = os.path.join(LYRICS_DIR, f)
-                break
+    # 0. 优先用音频文件名查 LRC（lyrics_sync.py 用文件名存的）
+    if file_url and file_url.startswith("file://"):
+        raw_path = file_url
+        # Strip file:// prefix, then URL-decode (DBus encodes non-ASCII)
+        if "file://" in raw_path:
+            raw_path = raw_path.split("file://", 1)[1]
+        raw_path = unquote(raw_path)
+        file_basename = os.path.splitext(os.path.basename(raw_path))[0]
+        if file_basename:
+            file_safe = re.sub(r'[\\/*?:"<>|]', "", file_basename)
+            file_candidate = os.path.join(LYRICS_DIR, f"{file_safe}.lrc")
+            if os.path.exists(file_candidate):
+                with open(file_candidate, 'r', encoding='utf-8') as f:
+                    return _parse_lrc(f.read())
 
-    if os.path.exists(fpath):
-        with open(fpath, 'r', encoding='utf-8') as f:
-            return _parse_lrc(f.read())
+    # 1. 精确匹配 (title - artist).lrc
+    for combo in (
+        f"{title_safe} - {artist_safe}",
+        f"{artist_safe} - {title_safe}",
+    ):
+        candidate = os.path.join(LYRICS_DIR, f"{combo}.lrc")
+        if os.path.exists(candidate):
+            with open(candidate, 'r', encoding='utf-8') as f:
+                return _parse_lrc(f.read())
 
-    # 2. 调 API
+    # 2. 模糊匹配：rapidfuzz token_sort_ratio 打分
+    from rapidfuzz import process, fuzz
+
+    query = f"{title_safe} {artist_safe}".strip()
+    lrc_files = [f for f in os.listdir(LYRICS_DIR) if f.endswith(".lrc")]
+    if lrc_files and query:
+        # Strip .lrc extension for matching
+        choices = {f[:-4]: f for f in lrc_files}
+        best = process.extractOne(query, list(choices.keys()), scorer=fuzz.token_sort_ratio)
+        if best and best[1] >= 75:
+            fpath = os.path.join(LYRICS_DIR, choices[best[0]])
+            with open(fpath, 'r', encoding='utf-8') as f:
+                return _parse_lrc(f.read())
+
+    # 3. 调 API
     try:
         kw = f"{title} {artist}".strip()
         # 搜索
@@ -649,12 +778,12 @@ def cmd_dlyrics(ctx: Context, *args):
                         break
 
                     # 提取信息
+                    file_url = str(meta.get("xesam:url", ""))  # capture for LRC lookup
                     title = str(meta.get("xesam:title", ""))
                     if not title or title == "Unknown Title":
                         # Fallback: extract title from xesam:url (VLC doesn't provide xesam:title)
-                        url = str(meta.get("xesam:url", ""))
-                        if url.startswith("file://"):
-                            title = os.path.splitext(os.path.basename(url))[0]
+                        if file_url.startswith("file://"):
+                            title = os.path.splitext(os.path.basename(file_url))[0]
                         if not title:
                             title = "Unknown Title"
                     artist_list = meta.get("xesam:artist", ["Unknown Artist"])
@@ -669,7 +798,7 @@ def cmd_dlyrics(ctx: Context, *args):
 
                         last_key = curr_key
                         try:
-                            timeline = _get_lyrics_data(title, artist)
+                            timeline = _get_lyrics_data(title, artist, file_url)
                             time_keys = [x[0] for x in timeline]
                         except Exception:
                             timeline = []
@@ -843,6 +972,13 @@ def cmd_pc(ctx: Context, *args):
         p_status = ctx.dbus.get_status()
         track = ctx.dbus.get_current_track_name()
 
+        vol_info = ""
+        if balance_enabled:
+            anchor = vol_cache.anchor_val
+            unit = "LUFS" if adjust_method == "lufs" else "dB"
+            curve_str = f" curve={curve:.1f}" if curve != 1.0 else ""
+            vol_info = f"\n🔊 VolBal: [bold cyan]ON[/] ({adjust_method}{curve_str}) | Anchor: [bold]{anchor:.1f} {unit}[/]" if anchor is not None else f"\n🔊 VolBal: [bold cyan]ON[/] ({adjust_method}) | Anchor: —"
+
         content = [
             f"[bold cyan]🎯 Initial Goal:[/][white] {user_prompt}[/]",
             f"[bold green]🚦 Player Status:[/][yellow] {p_status}[/]",
@@ -851,12 +987,33 @@ def cmd_pc(ctx: Context, *args):
             f"📦 Queue: [bold]{len(current_queue)}[/] | Batch Buffer: [bold]{len(buffer)}/2[/]",
             f"🧠 AI Engine: {'[blink orange1]THINKING...[/]' if pc_status['working'] else '[dim]IDLE[/]'}",
             f"📝 Progress: [bold green]{pc_status['count']}[/] chars | Round: #{fetch_count + 1}",
-            f"💾 Memory: [bold]{len(rolling_history)}[/]/100 tracks"
+            f"💾 Memory: [bold]{len(rolling_history)}[/]/100 tracks{vol_info}"
         ]
         return Panel("\n".join(content), title="📻 AI DJ CONTINUOUS STUDIO", border_style="blue")
 
     # --- 4. Main Loop ---
     console.print("[bold green]>>> PC Mode Activated. (Rolling Memory & Dynamic Prompting)[/]")
+
+    # --- Volume Balance Setup ---
+    balance_enabled = ctx.config['preferences'].get('dynamic_balance_volume', False)
+    is_verbose = ctx.config['preferences'].get('verbose', False)
+    adjust_method = ctx.config['preferences'].get('sound_adjust_method', 'lufs')
+    curve = ctx.config['preferences'].get('volume_curve', 3.0)
+    vol_cache = LoudnessCache(method=adjust_method, curve=curve)
+    is_first_track = True
+
+    if balance_enabled:
+        method_labels = {"linear": "RMS (linear)", "lufs": "ITU-R BS.1770 LUFS (perceptual)"}
+        method_label = method_labels.get(adjust_method, adjust_method)
+        curve_str = f" | Curve: {curve:.1f}x compensation" if curve != 1.0 else " | Curve: linear passthrough"
+        console.print(
+            f"[bold cyan]🔊 Dynamic Volume Balance: ON | Method: {method_label}{curve_str}[/]\n"
+            "   First track sets anchor @ 50% — use [bold underline]system volume[/] to adjust overall level"
+        )
+        if is_verbose:
+            console.print(
+                "   [dim]Verbose: audio analysis details, dB deltas, pre-analysis activity will be logged[/]"
+            )
 
     # Pass console=console so Rich renders concurrent console.print() above the Live panel
     with Live(make_pc_panel(), console=console, transient=True) as live:
@@ -871,6 +1028,58 @@ def cmd_pc(ctx: Context, *args):
                 if status in ["Stopped", "Finished", "Unknown"]:
                     if current_queue:
                         next_track = current_queue.pop(0)
+
+                        # --- Dynamic Volume Balance ---
+                        if balance_enabled:
+                            from loudness import loudness_key
+                            info = vol_cache.get(next_track['path'])
+                            song_name = next_track['name'][:35]
+                            cur_val = loudness_key(info, adjust_method) if info else None
+                            cur_rms = info["rms_db"] if info else None
+                            cur_peak = info["peak_db"] if info else None
+                            cur_lufs = info["integrated_lufs"] if info else None
+                            is_lufs = adjust_method == "lufs"
+                            unit = "LUFS" if is_lufs else "dB"
+
+                            if is_first_track:
+                                ctx.dbus.set_volume(0.5)
+                                vol_cache.set_anchor(next_track['path'], base_volume=0.5)
+                                is_first_track = False
+                                lufs_str = f"  LUFS: {cur_lufs:.1f}" if is_lufs and cur_lufs is not None else ""
+                                console.print(
+                                    f"[bold cyan]🔊 VolBal · ANCHOR[/] [{song_name}] "
+                                    f"Peak: {cur_peak:.1f} dBFS  RMS: {cur_rms:.1f} dBFS{lufs_str}  → Vol pinned @ 50%\n"
+                                    f"   [dim]Method: {adjust_method} | Use [underline]system volume[/] for overall level[/]"
+                                )
+                            else:
+                                target_vol = vol_cache.target_volume(next_track['path'])
+                                anchor = vol_cache.anchor_val
+                                db_delta = (anchor - cur_val) if (anchor is not None and cur_val is not None) else 0.0
+
+                                if target_vol is not None:
+                                    ctx.dbus.set_volume(target_vol)
+                                    if is_verbose:
+                                        delta_str = f"+{db_delta:.1f}" if db_delta > 0 else f"{db_delta:.1f}"
+                                        val_label = f"LUFS: {cur_lufs:.1f}" if is_lufs and cur_lufs is not None else f"RMS: {cur_rms:.1f} dBFS"
+                                        console.print(
+                                            f"[cyan]🔊 VolBal · SWITCH[/] [{song_name}] "
+                                            f"Peak: {cur_peak:.1f}  {val_label} | "
+                                            f"Anchor: {anchor:.1f} {unit}  Δ: {delta_str} {unit} | "
+                                            f"Vol: {vol_cache.base_volume:.0%} → [bold]{target_vol:.0%}[/]"
+                                        )
+
+                            # Pre-analyze next track in background while current plays
+                            if current_queue:
+                                next_path = current_queue[0]['path']
+                                next_name = current_queue[0]['name'][:35]
+                                if is_verbose:
+                                    cached = next_path in vol_cache._cache
+                                    console.print(
+                                        f"   [dim]⏳ VolBal · PRE-FETCH[/] [{next_name}] "
+                                        f"{'[green](cached)[/]' if cached else '[yellow](analyzing…)[/]'}"
+                                    )
+                                vol_cache.pre_analyze(next_path)
+
                         ctx.dbus.send_files([next_track['path']])
 
                         # Record frequency on actual track switch (PC mode)
@@ -885,6 +1094,14 @@ def cmd_pc(ctx: Context, *args):
                         time.sleep(2)
                     elif buffer:
                         current_queue = buffer.pop(0)
+                        # Pre-analyze first track of new batch in background
+                        if balance_enabled and current_queue:
+                            if is_verbose:
+                                console.print(
+                                    f"   [dim]📦 VolBal · BATCH LOAD[/] {len(current_queue)} tracks — "
+                                    f"pre-fetching [{current_queue[0]['name'][:30]}]"
+                                )
+                            vol_cache.pre_analyze(current_queue[0]['path'])
                     else:
                         if not pc_status['working']:
                             threading.Thread(target=fetch_next_batch, daemon=True).start()

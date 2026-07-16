@@ -43,7 +43,10 @@ def load_config():
         "verbose": False,
         "saved_trigger": None,
         "dbus_target": None,
-        "record_freq": False
+        "record_freq": False,
+        "dynamic_balance_volume": False,
+        "sound_adjust_method": "lufs",
+        "volume_curve": 3.0
     }
     for key, val in pref_defaults.items():
         if key not in config["preferences"]:

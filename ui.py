@@ -3,6 +3,7 @@ from rich.table import Table
 from rich.panel import Panel
 from rich.markdown import Markdown
 from command_handler import console
+from rich.console import Group
 import re
 
 def print_banner(base_url, model):
@@ -53,17 +54,68 @@ def print_playlist(playlist, metadata, title_suffix="List"):
     console.print(t)
 
 def print_status(config, ai_settings, playlist_len):
-    t = Table(title="⚙️ System Status")
-    t.add_column("Setting", style="cyan")
-    t.add_column("Value", style="yellow")
-    t.add_row("API Endpoint", ai_settings.get("base_url"))
-    t.add_row("Current Model", config['preferences']['model'])
-    t.add_row("Metadata Model", ai_settings.get("metadata_model", "N/A"))
-    t.add_row("Verbose Mode", str(config['preferences']['verbose']))
-    t.add_row("Auto Trigger", str(config['preferences']['saved_trigger'] or "OFF"))
-    t.add_row("DBus Target", str(config['preferences']['dbus_target'] or "Auto"))
-    t.add_row("Playlist Cache", f"{playlist_len} tracks")
-    console.print(t)
+    pref = config.get('preferences', {})
+
+    # --- Helpers ---
+    def on_off(val, on_label="ON", off_label="OFF"):
+        return f"[bold green]{on_label}[/]" if val else f"[dim]{off_label}[/]"
+
+    def fmt_row(key, val):
+        return f"  [cyan]{key}[/]  [yellow]{val}[/]"
+
+    def make_section(title, rows, border="blue"):
+        return Panel("\n".join(rows), title=title, border_style=border, padding=(0, 1))
+
+    # --- PLAYBACK ---
+    dbus_tgt = pref.get('dbus_target') or "Auto"
+    trigger = pref.get('saved_trigger') or "OFF"
+    mf = config.get('music_folders', [])
+    mf_label = f"{len(mf)} folders" if mf else "None"
+
+    playback_rows = [
+        fmt_row("DBus Target", dbus_tgt),
+        fmt_row("Saved Trigger", trigger),
+        fmt_row("Music Folders", mf_label),
+        fmt_row("Playlist Cache", f"{playlist_len} tracks"),
+    ]
+    sections = [make_section("🔊 PLAYBACK", playback_rows)]
+
+    # --- VOLUME BALANCE ---
+    volbal = pref.get('dynamic_balance_volume', False)
+    method = pref.get('sound_adjust_method', 'lufs')
+    method_labels = {"linear": "RMS (linear)", "lufs": "ITU-R BS.1770 LUFS (perceptual)"}
+    method_label = method_labels.get(method, method)
+
+    curve = pref.get('volume_curve', 3.0)
+    curve_label = f"{curve:.1f}x" if curve != 1.0 else "linear (1.0x)"
+
+    vol_rows = [
+        fmt_row("Dynamic Balance", on_off(volbal, "ACTIVE", "inactive")),
+        fmt_row("Method", method_label),
+        fmt_row("Volume Curve", curve_label),
+    ]
+    sections.append(make_section("🔈 VOLUME BALANCE", vol_rows))
+
+    # --- AI ---
+    model = pref.get('model') or "default"
+    ai_rows = [
+        fmt_row("API Endpoint", ai_settings.get('base_url', '—')),
+        fmt_row("Chat Model", model),
+        fmt_row("Metadata Model", ai_settings.get('metadata_model', '—')),
+    ]
+    sections.append(make_section("🧠 AI", ai_rows, border="magenta"))
+
+    # --- DEBUG ---
+    verbose = pref.get('verbose', False)
+    freq = pref.get('record_freq', False)
+
+    debug_rows = [
+        fmt_row("Verbose", on_off(verbose)),
+        fmt_row("Freq Recording", on_off(freq, "RECORDING", "idle")),
+    ]
+    sections.append(make_section("🐛 DEBUG / LOGGING", debug_rows, border="dim"))
+
+    console.print(Panel(Group(*sections), title="⚙️  System Status", border_style="bold blue"))
 
 def print_metadata(name, data):
     t = Table(title=f"ℹ️ Metadata: [bold green]{name}[/]", border_style="blue")
