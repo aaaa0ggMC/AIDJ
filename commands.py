@@ -745,6 +745,12 @@ def cmd_dlyrics(ctx: Context, *args):
     if not is_immersive:
         console.print("[yellow]👋 Lyrics mode exited.[/]")
 
+@registry.register("games")
+def cmd_games(ctx: Context, *args):
+    """Open built-in mini-games (standalone mode)."""
+    from wait_games import run_free_play
+    run_free_play()
+
 @registry.register("pc")
 def cmd_pc(ctx: Context, *args):
     """

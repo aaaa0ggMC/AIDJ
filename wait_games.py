@@ -119,3 +119,63 @@ def _run_waiting_game_inner(stop_event, ai_status=None):
 
             time.sleep(0.05)
             step += 1
+
+# --- 独立游戏模式 ---
+def run_free_play():
+    """独立运行游戏（不依赖 AI 等待事件），按 Q 退出。"""
+    import termios
+    old_tty = termios.tcgetattr(sys.stdin.fileno())
+    tty.setcbreak(sys.stdin.fileno())
+
+    try:
+        _run_free_play_inner()
+    finally:
+        termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, old_tty)
+
+def _run_free_play_inner():
+    from rich.console import Console
+    c = Console()
+
+    available_games = get_all_games()
+    if not available_games:
+        c.print("[red]No games found in /games folder[/]")
+        return
+
+    current_game_name = random.choice(available_games)
+    game, name = load_game(current_game_name)
+
+    if not game:
+        c.print(f"[red]Failed to load game: {name}[/]")
+        return
+
+    with Live(refresh_per_second=15, transient=True, auto_refresh=False) as live:
+        step = 0
+        while True:
+            key = InputHandler.get_key()
+
+            if key == 'q':
+                break
+
+            if key == 'p':
+                others = [g for g in available_games if g != current_game_name]
+                if others:
+                    current_game_name = random.choice(others)
+                elif available_games:
+                    current_game_name = available_games[0]
+                game, name = load_game(current_game_name)
+                step = 0
+                key = None
+
+            if key and game:
+                game.handle_input(key)
+
+            if game:
+                renderable = game.render(step)
+                if isinstance(renderable, Panel):
+                    base_sub = renderable.subtitle or ""
+                    if "[P] Switch" not in base_sub:
+                        renderable.subtitle = f"{base_sub} | [dim][P] Switch | [Q] Quit[/]"
+                live.update(renderable, refresh=True)
+
+            time.sleep(0.05)
+            step += 1

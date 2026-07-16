@@ -11,13 +11,13 @@ class Game:
     def _reset(self):
         self.bird_y = float(self.height // 2)
         self.bird_vel = 0.0
-        self.gravity = 0.25
+        self.gravity = 0.3
         self.jump_strength = -1.2
         self.pipes = [] # list of [x_pos, gap_y_start]
         self.score = 0
         self.game_over = False
         self.reset_timer = 0
-        self.gap_size = 4
+        self.gap_size = 10
 
     def handle_input(self, key):
         if self.game_over: return
