@@ -887,13 +887,37 @@ def cmd_pc(ctx: Context, *args):
     - Features: 100-song Rolling Memory, Context Pruning.
     - Logic: Dynamic Prompt (Batch #1: Request -> Batch #2+: Sequence Flow).
     - Requirement: Min 8 tracks per batch.
+    - Options: --anchor <value>  Set starting anchor loudness (LUFS or RMS dB).
+              If omitted, the first track's loudness becomes the anchor.
     - UI: English, silent mode (no DJ commentary), real-time char count.
     """
-    if not args:
-        console.print("[red]Usage: pc <prompt>[/]")
+    # --- 0. Parse --anchor flag ---
+    args_list = list(args)
+    anchor_value = None
+    prompt_parts = []
+
+    i = 0
+    while i < len(args_list):
+        if args_list[i] == "--anchor":
+            if i + 1 < len(args_list):
+                try:
+                    anchor_value = float(args_list[i + 1])
+                except ValueError:
+                    console.print(f"[red]Invalid anchor value: '{args_list[i + 1]}'. Must be a number (e.g. -14.0 LUFS or -12.0 dB).[/]")
+                    return
+                i += 2
+            else:
+                console.print("[red]--anchor requires a value (e.g. --anchor -14.0)[/]")
+                return
+        else:
+            prompt_parts.append(args_list[i])
+            i += 1
+
+    if not prompt_parts:
+        console.print("[red]Usage: pc [--anchor <value>] <prompt>[/]")
         return
 
-    user_prompt = " ".join(args)
+    user_prompt = " ".join(prompt_parts)
 
     # --- 1. State & Rolling Memory ---
     buffer = []
@@ -1002,13 +1026,25 @@ def cmd_pc(ctx: Context, *args):
     vol_cache = LoudnessCache(method=adjust_method, curve=curve)
     is_first_track = True
 
+    if anchor_value is not None:
+        if not balance_enabled:
+            console.print("[yellow]⚠️  --anchor ignored: volbal is OFF. Enable with 'volbal' first.[/]")
+        else:
+            vol_cache.set_anchor_value(anchor_value, base_volume=0.5)
+            is_first_track = False  # anchor manually set, skip first-track auto-anchor
+
     if balance_enabled:
         method_labels = {"linear": "RMS (linear)", "lufs": "ITU-R BS.1770 LUFS (perceptual)"}
         method_label = method_labels.get(adjust_method, adjust_method)
         curve_str = f" | Curve: {curve:.1f}x compensation" if curve != 1.0 else " | Curve: linear passthrough"
+        unit = "LUFS" if adjust_method == "lufs" else "dB"
+        if anchor_value is not None:
+            anchor_msg = f"Anchor: [bold]{anchor_value:.1f} {unit}[/] (manual)"
+        else:
+            anchor_msg = "First track sets anchor @ 50%"
         console.print(
             f"[bold cyan]🔊 Dynamic Volume Balance: ON | Method: {method_label}{curve_str}[/]\n"
-            "   First track sets anchor @ 50% — use [bold underline]system volume[/] to adjust overall level"
+            f"   {anchor_msg} — use [bold underline]system volume[/] to adjust overall level"
         )
         if is_verbose:
             console.print(

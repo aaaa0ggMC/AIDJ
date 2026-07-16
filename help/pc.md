@@ -7,7 +7,7 @@
 ## SYNOPSIS
 
 ```
-pc <prompt>
+pc [--anchor <value>] <prompt>
 ```
 
 ## DESCRIPTION
@@ -29,7 +29,11 @@ Key characteristics:
 
 ## OPTIONS
 
-None. The entire argument string after `pc` is treated as the prompt.
+| Flag | Description |
+|---|---|
+| `--anchor <value>` | Set explicit starting anchor loudness (LUFS or RMS dB). If omitted, the first track's loudness becomes the anchor (default). Requires [volbal](cmd:volbal) to be enabled. |
+
+The entire remaining argument string after the optional flag is treated as the prompt.
 
 ## BEHAVIOR
 
@@ -49,6 +53,10 @@ When Dynamic Volume Balance is enabled ([volbal](cmd:volbal)):
 
 - **First track**: sets the MPRIS player volume to 50% and establishes a
   loudness anchor from that track's RMS (or LUFS) value.
+- **\-\-anchor `<value>`**: overrides auto-anchor — instead of deriving the
+  anchor from the first track, use the explicit value (e.g. `-14.0` for LUFS,
+  `-12.0` for RMS dB). The first track's volume is then computed relative to
+  this anchor.
 - **Subsequent tracks**: computes the target volume for each new track
   relative to the anchor, applying the configured
   [adjmethod](cmd:adjmethod) and [volcurve](cmd:volcurve) compensation.
@@ -69,5 +77,6 @@ When Dynamic Volume Balance is enabled ([volbal](cmd:volbal)):
 ```
 pc relaxing acoustic evening
 pc high energy J-rock workout
-pc lo-fi beats with female vocals
+pc --anchor -14.0 lo-fi beats with female vocals
+pc --anchor -18.5 ambient sleep soundscape
 ```

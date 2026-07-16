@@ -141,7 +141,7 @@ class LoudnessCache:
         threading.Thread(target=self.get, args=(filepath,), daemon=True).start()
 
     def set_anchor(self, filepath, base_volume=0.5):
-        """Set anchor reference. Returns target volume."""
+        """Set anchor reference from a file's loudness. Returns target volume."""
         info = self.get(filepath)
         if info is None:
             return base_volume
@@ -150,6 +150,11 @@ class LoudnessCache:
             self._anchor_val = val
             self._base_volume = base_volume
         return base_volume
+
+    def set_anchor_value(self, anchor_val, base_volume=0.5):
+        """Set anchor reference from an explicit loudness value (LUFS or RMS dB)."""
+        self._anchor_val = anchor_val
+        self._base_volume = base_volume
 
     @property
     def anchor_val(self):
