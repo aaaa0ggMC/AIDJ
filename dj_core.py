@@ -26,31 +26,52 @@ def get_song_info(client, song_info, model_name):
     except Exception as e:
         return None
 
-def sync_metadata(client, targets, metadata, model_name):
+def sync_metadata(client, targets, metadata, model_name, concurrency=1):
     if not targets: return metadata
     log(f"[cyan]🚀 Syncing {len(targets)} new songs using {model_name}... (Ctrl+C to skip)[/]")
+    log(f"[dim]⚙️  Concurrency: {concurrency} worker(s)[/]")
     pbar = tqdm(targets.items(), unit="song")
 
+    def _process_one(item):
+        name, path = item
+        try:
+            res = requests.get(f"{NCM_BASE_URL}/search?keywords=\"{name}\"&limit=1", timeout=5).json()
+            if res.get('code')!=200 or res['result']['songCount']==0: return None
+            sid = res['result']['songs'][0]['id']
+            l_res = requests.get(f"{NCM_BASE_URL}/lyric", params={"id": sid}, timeout=5).json()
+            raw_lyric = l_res.get('lrc', {}).get('lyric', "暂无歌词")
+
+            info = {"title": name, "lyrics": raw_lyric[:500]}
+            resp = get_song_info(client, info, model_name)
+
+            if resp:
+                meta_dict = json.loads(resp)
+                metadata[name] = meta_dict
+                append_metadata_jsonl(name, meta_dict)
+                return name
+        except KeyboardInterrupt: raise
+        except: pass
+        return None
+
     try:
-        for name, path in pbar:
-            pbar.set_postfix_str(f"{name[:10]}...")
-            try:
-                res = requests.get(f"{NCM_BASE_URL}/search?keywords=\"{name}\"&limit=1", timeout=5).json()
-                if res.get('code')!=200 or res['result']['songCount']==0: continue
-                sid = res['result']['songs'][0]['id']
-                l_res = requests.get(f"{NCM_BASE_URL}/lyric", params={"id": sid}, timeout=5).json()
-                raw_lyric = l_res.get('lrc', {}).get('lyric', "暂无歌词")
-
-                info = {"title": name, "lyrics": raw_lyric[:500]}
-                resp = get_song_info(client, info, model_name)
-
-                if resp:
-                    meta_dict = json.loads(resp)
-                    metadata[name] = meta_dict
-                    # 直接追加到 JSONL，不再频繁重写整个 JSON
-                    append_metadata_jsonl(name, meta_dict)
-            except KeyboardInterrupt: raise
-            except: continue
+        if concurrency <= 1:
+            for name, path in pbar:
+                pbar.set_postfix_str(f"{name[:10]}...")
+                _process_one((name, path))
+        else:
+            items = list(targets.items())
+            with ThreadPoolExecutor(max_workers=concurrency) as executor:
+                futures = {executor.submit(_process_one, item): item for item in items}
+                completed = 0
+                for future in futures:
+                    try:
+                        future.result()
+                        completed += 1
+                        pbar.update(1)
+                        name = futures[future][0]
+                        pbar.set_postfix_str(f"{name[:10]}...")
+                    except KeyboardInterrupt: raise
+                    except: pass
     except KeyboardInterrupt:
         log("\n[yellow]⚠️ Sync skipped.[/]")
 

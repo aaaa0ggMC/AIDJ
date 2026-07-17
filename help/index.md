@@ -85,6 +85,7 @@
 | `model` | — | Select AI model |
 | `verbose` | — | Toggle debug logging |
 | `record_freq` | — | Toggle play-count tracking |
+| `concurrency` | `conc` | Set metadata sync concurrency |
 | `refresh` | — | Refresh session (keep history) |
 | `reset` | — | Full session reset |
 | `status` | `check`, `conf` | Configuration dashboard |

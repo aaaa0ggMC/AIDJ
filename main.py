@@ -104,7 +104,8 @@ def main():
     missing = {k:v for k,v in musics.items() if k not in metadata}
     if missing:
         model = ai_settings.get("metadata_model", "deepseek-chat")
-        metadata = sync_metadata(client, missing, metadata, model)
+        metadata = sync_metadata(client, missing, metadata, model,
+                                  concurrency=config['preferences'].get('metadata_concurrency', 1))
     
     ensure_playlist_dir()
     

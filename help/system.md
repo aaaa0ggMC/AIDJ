@@ -11,6 +11,7 @@
 | `model` | — | Select AI model |
 | `verbose` | — | Toggle debug logging |
 | `record_freq` | — | Toggle play-count tracking |
+| `concurrency` | `conc` | Set metadata sync concurrency |
 | `refresh` | — | Refresh session (keep history) |
 | `reset` | — | Full session reset |
 | `status` | `check`, `conf` | Configuration dashboard |
@@ -48,6 +49,20 @@ Toggle detailed debug logging. When enabled:
 Toggle play-count frequency tracking. When enabled, each time a track plays
 (via PC mode), its count is incremented. Data is flushed to disk in batches
 of 10 tracks. The AI uses frequency data to avoid over-playing tracks.
+
+### `concurrency` / `conc`
+
+Set or view metadata sync concurrency. Controls how many songs are processed
+in parallel when building metadata for new music files.
+
+```
+concurrency          # show current value
+concurrency 4        # use 4 parallel workers
+concurrency 1        # back to sequential (default)
+```
+
+Higher values (2-8) speed up initial metadata sync significantly, but
+increase API request load. Capped at 16 to avoid rate limits.
 
 ### `refresh`
 

@@ -46,7 +46,8 @@ def load_config():
         "record_freq": False,
         "dynamic_balance_volume": False,
         "sound_adjust_method": "lufs",
-        "volume_curve": 3.0
+        "volume_curve": 3.0,
+        "metadata_concurrency": 1
     }
     for key, val in pref_defaults.items():
         if key not in config["preferences"]:

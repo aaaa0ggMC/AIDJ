@@ -145,6 +145,33 @@ def cmd_record_freq(ctx: Context, *args):
             ctx._freq = None
         console.print(f"[yellow]📊 Frequency Recording: OFF (saved)[/]")
 
+@registry.register("concurrency", "conc")
+def cmd_concurrency(ctx: Context, *args):
+    """Set metadata sync concurrency: concurrency <count> (default 1)."""
+    current = ctx.config['preferences'].get('metadata_concurrency', 1)
+
+    if not args:
+        console.print(f"[cyan]Metadata sync concurrency: [bold]{current}[/][/]")
+        console.print("Usage: concurrency <number>")
+        console.print("  [dim]Higher values = faster sync, but more API load[/]")
+        return
+
+    if not args[0].isdigit():
+        console.print(f"[red]Invalid count: '{args[0]}'. Must be a positive integer.[/]")
+        return
+
+    count = int(args[0])
+    if count < 1:
+        console.print("[red]Concurrency must be at least 1.[/]")
+        return
+    if count > 16:
+        console.print("[yellow]⚠️  Capped at 16 to avoid API rate limits.[/]")
+        count = 16
+
+    ctx.config['preferences']['metadata_concurrency'] = count
+    save_config(ctx.config)
+    console.print(f"[green]⚙️  Metadata sync concurrency: [bold]{count}[/][/]")
+
 @registry.register("adjmethod", "loudnorm")
 def cmd_adjmethod(ctx: Context, *args):
     """Set volume adjustment strategy: linear (RMS) or lufs (ITU-R BS.1770 perceptual)."""

@@ -98,10 +98,12 @@ def print_status(config, ai_settings, playlist_len):
 
     # --- AI ---
     model = pref.get('model') or "default"
+    conc = pref.get('metadata_concurrency', 1)
     ai_rows = [
         fmt_row("API Endpoint", ai_settings.get('base_url', '—')),
         fmt_row("Chat Model", model),
         fmt_row("Metadata Model", ai_settings.get('metadata_model', '—')),
+        fmt_row("Sync Concurrency", str(conc)),
     ]
     sections.append(make_section("🧠 AI", ai_rows, border="magenta"))
 
