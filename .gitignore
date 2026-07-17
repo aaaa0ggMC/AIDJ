@@ -9,11 +9,12 @@ wheels/
 # Virtual environments
 .venv
 
-config.json
-music_metadata.json
-music_metadata.jsonl
-frequency.csv
-MetaBackup
-lyrics
+data/config.json
+data/music_metadata.json
+data/music_metadata.jsonl
+data/frequency.csv
+data/MetaBackup
+data/lyrics
 .dj_history
-history.jsonl
+data/history.jsonl
+data/lyrics_tc

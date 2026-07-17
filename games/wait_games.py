@@ -30,8 +30,9 @@ class InputHandler:
 
 def get_all_games():
     """获取所有可用游戏模块名的列表"""
-    game_folder = os.path.join(os.path.dirname(__file__), "games")
-    return [name for _, name, _ in pkgutil.iter_modules([game_folder])]
+    game_folder = os.path.dirname(__file__)
+    return [name for _, name, _ in pkgutil.iter_modules([game_folder])
+            if name not in ("__init__", "wait_games")]
 
 def load_game(game_name):
     """加载指定名称的游戏"""

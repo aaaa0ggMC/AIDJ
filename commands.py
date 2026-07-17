@@ -14,14 +14,14 @@ from rich.align import Align
 from rich.panel import Panel
 import questionary
 from rapidfuzz import process, fuzz
-from config import save_config, PLAYLIST_DIR, SEPARATOR, LANGUAGE, LYRICS_DIR, NCM_BASE_URL, load_frequency, save_frequency, bump_frequency
-from player import execute_player_command
-from command_handler import registry, console, Context
-from loudness import LoudnessCache
-import ui
+from core.config import save_config, PLAYLIST_DIR, SEPARATOR, LANGUAGE, LYRICS_DIR, NCM_BASE_URL, load_frequency, save_frequency, bump_frequency
+from core.player import execute_player_command
+from core.command_handler import registry, console, Context
+from core.loudness import LoudnessCache
+import core.ui as ui
 
 # --- Helper Logic ---
-def _update_playlist_and_trigger(ctx: Context, new_playlist, intro, title_desc):
+def _update_playlist_and_trigger(ctx: Context, new_playlist, intro, title_desc, skip_auto=False):
     """更新上下文中的播放列表，打印表格，并执行自动触发"""
     if intro:
         ui.print_dj_intro(intro)
@@ -36,18 +36,21 @@ def _update_playlist_and_trigger(ctx: Context, new_playlist, intro, title_desc):
     # Print UI
     ui.print_playlist(new_playlist, ctx.aidj.metadata, title_desc)
 
-    # Auto Trigger
-    trigger = ctx.config['preferences'].get('saved_trigger')
-    if trigger:
-        console.print(f"[yellow]⚡ Auto-Executing: {trigger}[/]")
-        execute_player_command(trigger, ctx.play_list, ctx.dbus)
+    # Auto Trigger — counts as a "send" (tracks are being played)
+    if not skip_auto:
+        trigger = ctx.config['preferences'].get('saved_trigger')
+        if trigger:
+            console.print(f"[yellow]⚡ Auto-Executing: {trigger}[/]")
+            execute_player_command(trigger, ctx.play_list, ctx.dbus)
+            _bump_freq(ctx)
 
-    # Record frequency (non-PC mode)
+def _bump_freq(ctx):
+    """Bump frequency for current playlist (called on send or auto-trigger)."""
     if ctx.config['preferences'].get('record_freq', False) and ctx._freq is not None:
-        song_names = [t['name'] for t in new_playlist]
+        song_names = [t['name'] for t in ctx.play_list]
         if bump_frequency(ctx._freq, song_names):
             save_frequency(ctx._freq)
-            console.print(f"[dim]📊 Updated frequency for {len(song_names)} tracks[/]")
+            console.print(f"[dim]📊 Frequency updated for {len(song_names)} tracks[/]")
 
 def _player_helper(ctx, cmd):
     """Player command wrapper"""
@@ -145,6 +148,101 @@ def cmd_record_freq(ctx: Context, *args):
             ctx._freq = None
         console.print(f"[yellow]📊 Frequency Recording: OFF (saved)[/]")
 
+@registry.register("discover", "disc", "fresh")
+def cmd_discover(ctx: Context, *args):
+    """Discover underplayed tracks — unheard first, then least-played."""
+    if not ctx._freq:
+        ctx._freq = load_frequency()
+        if not ctx._freq:
+            console.print("[yellow]No frequency data yet. Enable [bold]record_freq[/] first.[/]")
+            return
+
+    all_names = list(ctx.aidj.music_paths.keys())
+    heard = set(ctx._freq.keys())
+    unheard = [n for n in all_names if n not in heard]
+
+    if unheard:
+        limit = min(int(args[0]), len(unheard)) if args and args[0].isdigit() else min(20, len(unheard))
+        sample = random.sample(unheard, limit) if limit < len(unheard) else unheard[:limit]
+        mode = f"unheard ({len(unheard)} total)"
+    else:
+        # All songs have been played — fall back to least-played
+        ranked = sorted(all_names, key=lambda n: ctx._freq.get(n, 0))
+        limit = min(int(args[0]), len(ranked)) if args and args[0].isdigit() else min(20, len(ranked))
+        sample = ranked[:limit]
+        least_count = ctx._freq.get(sample[0], 0) if sample else 0
+        mode = f"least-played (≥{least_count}x, pool exhausted)"
+
+    playlist = [{"name": name, "path": ctx.aidj.music_paths[name]} for name in sample]
+    _update_playlist_and_trigger(ctx, playlist, None, f"Discover ({mode})")
+    console.print(f"[dim]🎲 {len(sample)} tracks — {mode}[/]")
+
+@registry.register("freqtop", "ftop")
+def cmd_freqtop(ctx: Context, *args):
+    """Show top N most-played songs: freqtop <N> (default 20)."""
+    if not ctx._freq:
+        ctx._freq = load_frequency()
+        if not ctx._freq:
+            console.print("[yellow]No frequency data yet. Enable [bold]record_freq[/] first.[/]")
+            return
+
+    sorted_freq = sorted(ctx._freq.items(), key=lambda x: x[1], reverse=True)
+    limit = min(int(args[0]), len(sorted_freq)) if args and args[0].isdigit() else min(20, len(sorted_freq))
+
+    playlist = []
+    for name, count in sorted_freq[:limit]:
+        if name in ctx.aidj.music_paths:
+            playlist.append({"name": name, "path": ctx.aidj.music_paths[name]})
+
+    if not playlist:
+        console.print("[yellow]No matching tracks in library.[/]")
+        return
+
+    _update_playlist_and_trigger(
+        ctx, playlist, None,
+        f"Top {len(playlist)} (most played)"
+    )
+    for i, (name, count) in enumerate(sorted_freq[:limit], 1):
+        if name in ctx.aidj.music_paths:
+            console.print(f"  [dim]#{i}[/] [bold]{name}[/] [dim]({count}x)[/]")
+
+@registry.register("analyse", "stats")
+def cmd_analyse(ctx: Context, *args):
+    """Analyse metadata distribution: analyse <language|emotion|genre>."""
+    from core.analyse import load_metadata, compute_distribution
+
+    field = args[0].lower() if args else "language"
+    valid = {"language", "emotion", "genre", "lang", "emo", "gen"}
+    alias = {"lang": "language", "emo": "emotion", "gen": "genre"}
+    field = alias.get(field, field)
+
+    if field not in valid:
+        console.print(f"[red]Unknown field: '{field}'. Choose language/emotion/genre.[/]")
+        return
+
+    entries = load_metadata()
+    if not entries:
+        console.print("[red]No metadata found.[/]")
+        return
+
+    items, total = compute_distribution(entries, field)
+
+    # Build bar chart
+    max_bar_width = 30
+    max_count = items[0][1] if items else 1
+
+    console.print(f"\n[bold cyan]📊 Metadata Distribution: [bold yellow]{field.title()}[/] ([dim]{len(items)} unique, {total} total[/])\n")
+
+    display = items[:20]  # top 20
+    for label, count, pct in display:
+        bar_len = int(count / max_count * max_bar_width) if max_count else 0
+        bar = "█" * bar_len
+        console.print(f"  [green]{label:<25}[/] [dim]{bar}[/] [bold]{count:>5}[/]  ({pct:.1f}%)")
+
+    if len(items) > 20:
+        other = sum(c for _, c, _ in items[20:])
+        console.print(f"  [dim]... and {len(items) - 20} more ({other} entries)[/]")
+
 @registry.register("concurrency", "conc")
 def cmd_concurrency(ctx: Context, *args):
     """Set metadata sync concurrency: concurrency <count> (default 1)."""
@@ -171,6 +269,74 @@ def cmd_concurrency(ctx: Context, *args):
     ctx.config['preferences']['metadata_concurrency'] = count
     save_config(ctx.config)
     console.print(f"[green]⚙️  Metadata sync concurrency: [bold]{count}[/][/]")
+
+@registry.register("token", "tokens")
+def cmd_token(ctx: Context, *args):
+    """Show current session token usage (from API response data)."""
+    aidj = ctx.aidj
+    p = aidj.prompt_tokens
+    c = aidj.completion_tokens
+
+    def _fmt(n):
+        if n >= 1_000_000:
+            return f"{n/1_000_000:.1f}M"
+        elif n >= 1_000:
+            return f"{n/1_000:.1f}k"
+        return str(n)
+
+    if p == 0 and c == 0:
+        console.print("[dim]📊 No tokens used yet this session.[/]")
+        return
+
+    total = p + c
+    console.print(
+        f"[cyan]📊 Tokens this session:[/] "
+        f"[yellow]{_fmt(p)}[/] prompt + "
+        f"[yellow]{_fmt(c)}[/] completion = "
+        f"[bold green]{_fmt(total)}[/] total"
+    )
+
+@registry.register("injects", "inj")
+def cmd_injects(ctx: Context, *args):
+    """Toggle metadata fields injected into AI library context."""
+    injects = ctx.config['preferences'].setdefault('library_injects', {
+        "genre": True, "emotion": True, "language": False,
+        "loudness": False, "review": False,
+    })
+
+    fields = ["genre", "emotion", "language", "loudness", "review"]
+    on_icon  = "[green]ON [/]"
+    off_icon = "[dim]OFF[/]"
+
+    if not args:
+        console.print("[cyan]📦 Library Injects (AI prompt context):[/]")
+        for f in fields:
+            state = on_icon if injects.get(f) else off_icon
+            console.print(f"  {state} {f}")
+        return
+
+    field = args[0].lower()
+    if field not in fields:
+        console.print(f"[red]Unknown field '{field}'. Options: {', '.join(fields)}[/]")
+        return
+
+    if len(args) < 2:
+        console.print(f"[yellow]Usage: injects {field} <on|off>[/]")
+        return
+
+    state = args[1].lower()
+    if state in ("on", "true", "1", "yes"):
+        injects[field] = True
+    elif state in ("off", "false", "0", "no"):
+        injects[field] = False
+    else:
+        console.print(f"[red]Invalid state '{state}'. Use on/off[/]")
+        return
+
+    save_config(ctx.config)
+    ctx.aidj.config = ctx.config
+    new_state = on_icon if injects[field] else off_icon
+    console.print(f"[green]📦 Library inject [bold]{field}[/] → {new_state}[/]")
 
 @registry.register("adjmethod", "loudnorm")
 def cmd_adjmethod(ctx: Context, *args):
@@ -297,6 +463,37 @@ def cmd_show(ctx: Context, *args):
         return
     ui.print_metadata(result[0], ctx.aidj.metadata[result[0]])
 
+@registry.register("search", "find", "s")
+def cmd_search(ctx: Context, *args):
+    """Fuzzy search music library: search <keywords> [N]."""
+    if not args:
+        console.print("[red]Usage: search <keywords> [count][/]")
+        return
+
+    # Parse: last arg is count if it's a digit, otherwise all are query
+    if args[-1].isdigit() and len(args) > 1:
+        limit = min(int(args[-1]), 50)
+        query = " ".join(args[:-1])
+    else:
+        limit = 10
+        query = " ".join(args)
+
+    keys = list(ctx.aidj.music_paths.keys())
+    results = process.extract(query, keys, scorer=fuzz.token_sort_ratio, limit=limit)
+
+    if not results or results[0][1] < 50:
+        console.print(f"[red]No matches for '{query}'.[/]")
+        return
+
+    playlist = [{"name": name, "path": ctx.aidj.music_paths[name]} for name, score, _ in results]
+    _update_playlist_and_trigger(
+        ctx, playlist, None,
+        f"Search: '{query}' ({len(playlist)} results)",
+        skip_auto=True
+    )
+    for name, score, _ in results:
+        console.print(f"  [dim]{score:>3}%[/]  {name}")
+
 # --- Generator Commands ---
 
 @registry.register("r")
@@ -413,6 +610,7 @@ def _c_vlc(ctx: Context, *args):
 def _c_send(ctx: Context, *args):
     """Send list to active DBus player."""
     _player_helper(ctx, "send")
+    _bump_freq(ctx)
 
 @registry.register("ls", "players")
 def cmd_list_players(ctx: Context, *args):
@@ -638,19 +836,24 @@ def cmd_view(ctx: Context, *args):
     ui.print_playlist(ctx.play_list, ctx.aidj.metadata, "Current Queue")
 
 def _parse_lrc(lrc_text):
-    """解析 LRC 文本为 [(seconds, text), ...]"""
+    """Parse LRC text into [(seconds, text), ...]. Handles multi-timestamp lines."""
     if not lrc_text: return []
     lines = []
-    # 匹配 [mm:ss.xx] 或 [mm:ss.xxx]
-    pattern = re.compile(r'\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)')
+    pattern = re.compile(r'\[(\d{2}):(\d{2})\.(\d{2,3})\]')
     for line in lrc_text.split('\n'):
-        match = pattern.search(line)
-        if match:
-            m, s, ms_str = int(match.group(1)), int(match.group(2)), match.group(3)
+        # Find all timestamp tags on this line
+        timestamps = pattern.findall(line)
+        if not timestamps:
+            continue
+        # Get the lyric text (everything after the last timestamp tag)
+        text = pattern.sub('', line).strip()
+        if not text:
+            continue
+        for m, s, ms_str in timestamps:
+            m, s = int(m), int(s)
             ms = int(ms_str) * (10 if len(ms_str) == 2 else 1)
             total = m * 60 + s + ms / 1000.0
-            text = match.group(4).strip()
-            if text: lines.append((total, text))
+            lines.append((total, text))
     lines.sort(key=lambda x: x[0])
     return lines
 
@@ -663,7 +866,7 @@ def _get_lyrics_data(title, artist, file_url=None):
     title_safe = re.sub(r'[\\/*?:"<>|]', "", title.strip(" -"))
     artist_safe = re.sub(r'[\\/*?:"<>|]', "", artist.strip(" -"))
 
-    # 0. 优先用音频文件名查 LRC（lyrics_sync.py 用文件名存的）
+    # 0. 优先用音频文件名查 LRC（tools/lyrics_sync.py 用文件名存的）
     if file_url and file_url.startswith("file://"):
         raw_path = file_url
         # Strip file:// prefix, then URL-decode (DBus encodes non-ASCII)
@@ -703,21 +906,25 @@ def _get_lyrics_data(title, artist, file_url=None):
                 return _parse_lrc(f.read())
 
     # 3. 调 API
+    # Pre-compute cache path for saving fetched lyrics
+    safe_filename = f"{title_safe} - {artist_safe}"
+    fpath = os.path.join(LYRICS_DIR, f"{safe_filename}.lrc")
+
     try:
         kw = f"{title} {artist}".strip()
         # 搜索
-        s_res = requests.get(f"{NCM_BASE_URL}/search", params={"keywords": kw, "limit": 1}, timeout=2).json()
+        s_res = requests.get(f"{NCM_BASE_URL}/search", params={"keywords": kw, "limit": 1}, timeout=5).json()
 
         raw = "[00:00.00] 暂无歌词"
         if s_res.get('code') == 200 and s_res['result']['songCount'] > 0:
             sid = s_res['result']['songs'][0]['id']
             # 获取
-            l_res = requests.get(f"{NCM_BASE_URL}/lyric", params={"id": sid}, timeout=2).json()
+            l_res = requests.get(f"{NCM_BASE_URL}/lyric", params={"id": sid}, timeout=5).json()
             if l_res.get('code') == 200:
                 raw = l_res.get('lrc', {}).get('lyric', "")
                 if not raw: raw = "[00:00.00] 纯音乐或无歌词"
 
-        # 3. 写缓存
+        # 写缓存
         with open(fpath, 'w', encoding='utf-8') as f:
             f.write(raw)
         return _parse_lrc(raw)
@@ -1094,7 +1301,7 @@ def cmd_pc(ctx: Context, *args):
 
                         # --- Dynamic Volume Balance ---
                         if balance_enabled:
-                            from loudness import loudness_key
+                            from core.loudness import loudness_key
                             info = vol_cache.get(next_track['path'])
                             song_name = next_track['name'][:35]
                             cur_val = loudness_key(info, adjust_method) if info else None
@@ -1108,12 +1315,13 @@ def cmd_pc(ctx: Context, *args):
                                 ctx.dbus.set_volume(0.5)
                                 vol_cache.set_anchor(next_track['path'], base_volume=0.5)
                                 is_first_track = False
-                                lufs_str = f"  LUFS: {cur_lufs:.1f}" if is_lufs and cur_lufs is not None else ""
-                                console.print(
-                                    f"[bold cyan]🔊 VolBal · ANCHOR[/] [{song_name}] "
-                                    f"Peak: {cur_peak:.1f} dBFS  RMS: {cur_rms:.1f} dBFS{lufs_str}  → Vol pinned @ 50%\n"
-                                    f"   [dim]Method: {adjust_method} | Use [underline]system volume[/] for overall level[/]"
-                                )
+                                if is_verbose:
+                                    lufs_str = f"  LUFS: {cur_lufs:.1f}" if is_lufs and cur_lufs is not None else ""
+                                    console.print(
+                                        f"[bold cyan]🔊 VolBal · ANCHOR[/] [{song_name}] "
+                                        f"Peak: {cur_peak:.1f} dBFS  RMS: {cur_rms:.1f} dBFS{lufs_str}  → Vol pinned @ 50%\n"
+                                        f"   [dim]Method: {adjust_method} | Use [underline]system volume[/] for overall level[/]"
+                                    )
                             else:
                                 target_vol = vol_cache.target_volume(next_track['path'])
                                 anchor = vol_cache.anchor_val

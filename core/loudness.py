@@ -105,7 +105,9 @@ def compute_volume(anchor_val, song_val, base_volume=0.5, curve=3.0):
         return base_volume
     db_diff = anchor_val - song_val
     gain = 10.0 ** (db_diff / 20.0)
-    linear_target = base_volume * gain
+    # actual amplitude at anchor: base_volume ^ curve (player warps MPRIS)
+    anchor_amplitude = base_volume ** curve
+    linear_target = anchor_amplitude * gain
     # Inverse-compensate the player's volume curve
     compensated = linear_target ** (1.0 / max(curve, 0.1))
     return max(0.05, min(1.0, compensated))

@@ -18,12 +18,12 @@ except ImportError:
 
 # 引入项目配置
 try:
-    from config import LYRICS_DIR, NCM_BASE_URL, CONFIG_FILE
+    from core.config import LYRICS_DIR, NCM_BASE_URL
 except ImportError:
     #以此作为 fallback，防止单独运行找不到 config.py
-    LYRICS_DIR = "./lyrics"
-    NCM_BASE_URL = "http://localhost:3000" # 假设你的 NCM API 地址
-    CONFIG_FILE = "./config.json"
+    LYRICS_DIR = "./data/lyrics"
+    NCM_BASE_URL = "http://localhost:3000"
+    CONFIG_FILE = "./data/config.json"
 
 console = Console()
 

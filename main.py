@@ -11,21 +11,21 @@ from questionary import Style
 from datetime import datetime
 
 # 引入模块
-from log import set_log_fn
-from config import load_config, CFG_KEY_MF, ensure_playlist_dir
-from dj_core import DJSession, scan_music_files, load_cached_metadata, sync_metadata
-from wait_games import run_waiting_game
-from player import DBusManager
-import ui
+from core.log import set_log_fn
+from core.config import load_config, CFG_KEY_MF, ensure_playlist_dir
+from core.dj_core import DJSession, scan_music_files, load_cached_metadata, sync_metadata
+from games.wait_games import run_waiting_game
+from core.player import DBusManager
+import core.ui as ui
 
-from command_handler import Context, registry, console
-import commands 
+from core.command_handler import Context, registry, console
+import commands
 
 # --- Terminal Injection Helpers ---
 fd = sys.stdin.fileno()
 old_settings = None
 
-def log_command_to_history(user_input, file_path="history.jsonl"):
+def log_command_to_history(user_input, file_path="data/history.jsonl"):
     """
     将用户命令以 JSONL 格式追加到本地文件中。
     每行是一个独立的 JSON 对象，包含时间戳和命令内容。
@@ -117,14 +117,14 @@ def main():
 
     # 5.1 如果 record_freq 已启用，加载频率数据
     if config['preferences'].get('record_freq', False):
-        from config import load_frequency
+        from core.config import load_frequency
         ctx._freq = load_frequency()
         console.print(f"[green]📊 Frequency tracking loaded ({len(ctx._freq)} songs)[/]")
     else:
         ctx._freq = None
     
     # 6. UI Banner
-    ui.print_banner(base_url, config['preferences']['model'])
+    ui.print_banner(config, musics, metadata)
     
     # 7. 准备 Prompt 工具
     history = FileHistory(".dj_history")
@@ -143,7 +143,10 @@ def main():
     while True:
         try:
             curr_trig = config['preferences'].get('saved_trigger')
-            prefix = f"[⚡ {curr_trig}] " if curr_trig else ""
+            freq_on = config['preferences'].get('record_freq', False)
+            trig_part = f"[⚡ {curr_trig}] " if curr_trig else ""
+            freq_part = "[●] " if freq_on else ""
+            prefix = trig_part + freq_part
             
             user_input = questionary.text(
                 f"{prefix}AIDJ >",

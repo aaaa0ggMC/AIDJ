@@ -4,8 +4,8 @@ from rich.console import Console
 from rich.progress import track
 
 # --- 配置区域 ---
-INPUT_DIR = "./lyrics"           # 输入目录 (简体源文件)
-OUTPUT_DIR = "./lyrics_tc"       # 输出目录 (繁体结果保存位置)
+INPUT_DIR = "../data/lyrics"           # 输入目录 (简体源文件)
+OUTPUT_DIR = "../data/lyrics_tc"       # 输出目录 (繁体结果保存位置)
 TARGET_LOCALE = 'zh-tw'          # 目标语言: 'zh-tw'(台湾正体), 'zh-hk'(香港繁体)
 
 console = Console()

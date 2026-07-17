@@ -81,13 +81,12 @@ uv pip install -r requirements.txt # 安装依赖
             "moonshotai/kimi-k2-thinking",
             "minimax/minimax-m2",
             "zai-org/glm-4.7",
-            "一堆模型，可以通过/model打开tui然后切换chat_model"
+            "一堆模型，可以通过/model命令切换"
         ],
-        "metadata_model": "deepseek/deepseek-v3.2",
-        "chat_model": "deepseek/deepseek-r1-turbo"
+        "metadata_model": "deepseek/deepseek-v3.2"
     },
     "preferences": {
-        "model": "deepseek-reasoner",
+        "model": "deepseek/deepseek-r1-turbo",
         "verbose": false,
         "auto_play": false,
         "saved_trigger": "mpv",

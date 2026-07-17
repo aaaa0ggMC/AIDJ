@@ -3,7 +3,7 @@ import subprocess
 import time
 import shutil
 import os
-from log import log
+from core.log import log
 
 class DBusManager:
     def __init__(self, preferred_target=None):

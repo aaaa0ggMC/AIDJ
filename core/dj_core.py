@@ -1,13 +1,13 @@
 import re
 import requests
 import threading
-from log import *
+from core.log import *
 from tqdm import tqdm
 from rich.panel import Panel
 from rapidfuzz import process, fuzz
 from concurrent.futures import ThreadPoolExecutor
 
-from config import *
+from core.config import *
 
 def get_song_info(client, song_info, model_name):
     try:
@@ -87,6 +87,8 @@ class DJSession:
         self.turn_count = 0
         self.played_songs = set()
         self.wait_injects = [wait_inject_prepare,wait_inject_main,wait_inject_after]
+        self.prompt_tokens = 0
+        self.completion_tokens = 0
 
     def refresh(self, clear_history=False):
         self.played_songs.clear()
@@ -98,12 +100,22 @@ class DJSession:
             log("[yellow]🧹 Cleared Played Songs[/]")
 
     def _format_library(self):
+        injects = self.config['preferences'].get('library_injects', {})
         lines = []
         available = set(self.metadata.keys()) & set(self.music_paths.keys())
-        for name in list(available):
-            info = self.metadata[name]
-            if isinstance(info, dict):
-                lines.append(f"- {name}: {info.get('genre','Pop')}, {info.get('emotion','Neutral')}")
+        for name in sorted(available):
+            info = self.metadata.get(name)
+            if not isinstance(info, dict):
+                lines.append(f"- {name}")
+                continue
+            parts = [name]
+            for field in ("genre", "emotion", "language", "loudness", "review"):
+                if injects.get(field) and info.get(field):
+                    val = info[field]
+                    if isinstance(val, list):
+                        val = ", ".join(str(v) for v in val)
+                    parts.append(str(val))
+            lines.append(" | ".join(parts))
         return "\n".join(lines)
 
     def parse_raw_playlist(self, raw_text, source="AI"):
@@ -200,14 +212,13 @@ Imagine
 """
 
         # --- 3. 注入上下文 (Context Injection) ---
-        # 适时注入 Library，防止上下文过长，但保证 AI 随时能看到清单
-        if self.turn_count == 1 or self.turn_count % 5 == 0:
-            # 强化 Library 的边界感
+        # 只在首轮注入一次 Library，之后 AI 可通过 attention 持续引用
+        if self.turn_count == 1:
             library_str = self._format_library()
             system_content = f"{base_prompt}\n\n### CURRENT MUSIC LIBRARY (Exact Keys Only):\n{library_str}"
 
             self.chat_history.append({"role": "system", "content": system_content})
-            if is_verbose: log("[dim]🔄 Context refreshed with strict library constraints.[/]")
+            if is_verbose: log("[dim]🔖 Library injected once (pinned in context).[/]")
 
         # --- 4. 构建用户请求 (User Message) ---
         # 在这里再次强调“封闭集合”概念
@@ -217,7 +228,7 @@ Imagine
             f"User Request: \"{user_request}\"\n"
             f"Constraint: Don't repeat these songs: [{forbidden_list}]\n"
             f"Language Rule: Detect the language used in the 'User Request'. The [Intro] section MUST be written in that EXACT SAME language. (e.g. If user asks in Chinese, reply in Chinese).\n"
-            f"Instruction: Check the Library provided in System context. "
+            f"Instruction: Check the Library in the first System message. "
             f"If matches found, output Intro + {SEPARATOR} + SongKeys. "
             f"If no matches, just Intro."
         )
@@ -236,12 +247,18 @@ Imagine
                     model=model,
                     messages=self.chat_history,
                     timeout=180.0,
-                    stream=True
+                    stream=True,
+                    stream_options={"include_usage": True}
                 )
 
                 for chunk in stream:
+                    # 捕获 usage（某些厂商放在空 chunk，某些放在最后有内容的 chunk）
+                    if hasattr(chunk, 'usage') and chunk.usage:
+                        u = chunk.usage
+                        self.prompt_tokens += (u.prompt_tokens or 0)
+                        self.completion_tokens += (u.completion_tokens or 0)
+
                     # [修复点 1] 必须先检查 choices 列表是否非空
-                    # 防止部分心跳包或结束包为空导致 IndexError
                     if not chunk.choices:
                         continue
 

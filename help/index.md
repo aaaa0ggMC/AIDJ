@@ -40,6 +40,7 @@
 | Command | Alias | Description |
 |---|---|---|
 | `view` | `list`, `pl`, `queue` | Display current queue |
+| `search` | `find`, `s` | Fuzzy search music library |
 | `show` | — | Show song metadata |
 | `save` | — | Save queue to named playlist |
 | `load` | — | Load named playlist |
@@ -57,6 +58,16 @@
 | `pc` | — | Continuous AI DJ mode |
 
 → `dhelp generate` and `dhelp pc` for details.
+
+## ANALYTICS
+
+| Command | Alias | Description |
+|---|---|---|
+| `analyse` | `stats` | Metadata distribution analysis |
+| `freqtop` | `ftop` | Top N most-played songs |
+| `discover` | `disc`, `fresh` | Discover underplayed songs |
+
+→ `dhelp analyse` for details.
 
 ## PLAYER CONTROL
 
@@ -86,6 +97,8 @@
 | `verbose` | — | Toggle debug logging |
 | `record_freq` | — | Toggle play-count tracking |
 | `concurrency` | `conc` | Set metadata sync concurrency |
+| `token` | `tokens` | Show session token usage |
+| `injects` | `inj` | Toggle library metadata injects |
 | `refresh` | — | Refresh session (keep history) |
 | `reset` | — | Full session reset |
 | `status` | `check`, `conf` | Configuration dashboard |

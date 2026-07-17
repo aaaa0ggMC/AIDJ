@@ -12,6 +12,8 @@
 | `verbose` | — | Toggle debug logging |
 | `record_freq` | — | Toggle play-count tracking |
 | `concurrency` | `conc` | Set metadata sync concurrency |
+| `token` | `tokens` | Show session token usage |
+| `injects` | `inj` | Toggle library metadata injects |
 | `refresh` | — | Refresh session (keep history) |
 | `reset` | — | Full session reset |
 | `status` | `check`, `conf` | Configuration dashboard |
@@ -46,9 +48,12 @@ Toggle detailed debug logging. When enabled:
 
 ### `record_freq`
 
-Toggle play-count frequency tracking. When enabled, each time a track plays
-(via PC mode), its count is incremented. Data is flushed to disk in batches
-of 10 tracks. The AI uses frequency data to avoid over-playing tracks.
+Toggle play-count frequency tracking. When enabled, each **send** (manual
+or via auto-trigger) increments the play count for each track in the queue.
+Data persists across sessions in `data/frequency.csv`.
+
+Note: simply previewing a playlist (`p`, `pr`, `r`) does **not** count as a
+listen — only `send` / auto-triggered sends do.
 
 ### `concurrency` / `conc`
 
@@ -63,6 +68,42 @@ concurrency 1        # back to sequential (default)
 
 Higher values (2-8) speed up initial metadata sync significantly, but
 increase API request load. Capped at 16 to avoid rate limits.
+
+### `token` / `tokens`
+
+Display the total token usage for the current session, broken down by
+prompt tokens and completion (generated) tokens. Values are read directly
+from the API response's `usage` field — no local tokenizer required.
+
+```
+token    # show session totals
+```
+
+Output example:
+
+```
+📊 Tokens this session: 12.3k prompt + 4.5k completion = 16.8k total
+```
+
+Counters accumulate across all chat turns in the session. The `reset`
+command resets counters along with chat history.
+
+### `injects` / `inj`
+
+Toggle which metadata fields are injected into AI prompts alongside song
+names. Song names are always included; all other fields are optional.
+
+```
+injects                 # show all toggle states
+injects review on       # enable review injection
+injects loudness off    # disable loudness injection
+```
+
+Fields: `genre`, `emotion`, `language`, `loudness`, `review`.
+
+Enabled fields appear as extra columns in the library table sent to the AI,
+improving recommendation quality at the cost of higher token usage per
+turn.
 
 ### `refresh`
 

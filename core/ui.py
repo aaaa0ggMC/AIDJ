@@ -2,17 +2,46 @@ import json
 from rich.table import Table
 from rich.panel import Panel
 from rich.markdown import Markdown
-from command_handler import console
+from core.command_handler import console
 from rich.console import Group
 import re
 
-def print_banner(base_url, model):
-    console.print(Panel.fit(
-        f"[bold cyan]          AI DJ SYSTEM v4.0 (Refactored)        [/]\n"
-        f"[dim]Endpoint: {base_url}[/]\n"
-        f"[dim]Model: {model}[/]",
-        title="✨ System Ready ✨", border_style="magenta"
-    ))
+def print_banner(config, musics, metadata):
+    pref = config.get('preferences', {})
+    ai_settings = config.get('ai_settings', {})
+    model = pref.get('model') or "default"
+    base_url = ai_settings.get('base_url', '—')
+    conc = pref.get('metadata_concurrency', 1)
+    volbal = pref.get('dynamic_balance_volume', False)
+    freq = pref.get('record_freq', False)
+    trigger = pref.get('saved_trigger')
+    mf = config.get('music_folders', [])
+
+    music_count = len(musics)
+    meta_count = len(metadata)
+    coverage = f"{meta_count}/{music_count}" if music_count else "—"
+    volbal_state = "[bold green]ON[/]" if volbal else "[dim]OFF[/]"
+    freq_state = "[bold green]ON[/]" if freq else "[dim]OFF[/]"
+    trigger_state = f"[bold cyan]{trigger}[/]" if trigger else "[dim]OFF[/]"
+    folder_list = "\n".join(f"    [dim]•[/] {f}" for f in mf) if mf else "    [dim]• (current dir)[/]"
+
+    body = (
+        f"[bold cyan]🎧 AI DJ SYSTEM v4.0[/]\n"
+        f"\n"
+        f"[bold]📡 API[/]\n"
+        f"  Endpoint  [dim]{base_url}[/]\n"
+        f"  Chat      [yellow]{model}[/]\n"
+        f"  Metadata  [yellow]{ai_settings.get('metadata_model', '—')}[/]  |  Sync  [bold]{conc}w[/]\n"
+        f"\n"
+        f"[bold]🎵 Music Library[/]\n"
+        f"{folder_list}\n"
+        f"  Tracks    [bold green]{music_count}[/]  |  Metadata  [bold cyan]{coverage}[/]\n"
+        f"\n"
+        f"[bold]⚙️  Quick Status[/]\n"
+        f"  VolBal     {volbal_state}    FreqRec  {freq_state}    AutoTrig  {trigger_state}"
+    )
+
+    console.print(Panel(body, title="✨ System Ready ✨", border_style="bold magenta"))
 
 def print_dj_intro(intro_text):
     if not intro_text: return
@@ -106,6 +135,13 @@ def print_status(config, ai_settings, playlist_len):
         fmt_row("Sync Concurrency", str(conc)),
     ]
     sections.append(make_section("🧠 AI", ai_rows, border="magenta"))
+
+    # --- LIBRARY INJECTS ---
+    injects = pref.get('library_injects', {})
+    inj_rows = []
+    for field in ("genre", "emotion", "language", "loudness", "review"):
+        inj_rows.append(fmt_row(field, on_off(injects.get(field, False))))
+    sections.append(make_section("📦 LIBRARY INJECTS", inj_rows, border="green"))
 
     # --- DEBUG ---
     verbose = pref.get('verbose', False)

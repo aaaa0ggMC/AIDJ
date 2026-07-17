@@ -1,14 +1,14 @@
 import os
 import json
 import csv
-from log import *
+from core.log import *
 
-CONFIG_PATH = "./config.json"
-METADATA_PATH = "./music_metadata.json"
-METADATA_JSONL_PATH = "./music_metadata.jsonl"
-FREQ_CSV_PATH = "./frequency.csv"
-PLAYLIST_DIR = "./playlists"
-LYRICS_DIR = "./lyrics"
+CONFIG_PATH = "./data/config.json"
+METADATA_PATH = "./data/music_metadata.json"
+METADATA_JSONL_PATH = "./data/music_metadata.jsonl"
+FREQ_CSV_PATH = "./data/frequency.csv"
+PLAYLIST_DIR = "./data/playlists"
+LYRICS_DIR = "./data/lyrics"
 MUSIC_EXTS = ('.mp3', '.flac', '.wav', '.m4a')
 NCM_BASE_URL = "http://localhost:3000"
 CFG_KEY_MF = "music_folders"
@@ -47,7 +47,14 @@ def load_config():
         "dynamic_balance_volume": False,
         "sound_adjust_method": "lufs",
         "volume_curve": 3.0,
-        "metadata_concurrency": 1
+        "metadata_concurrency": 1,
+        "library_injects": {
+            "genre": True,
+            "emotion": True,
+            "language": False,
+            "loudness": False,
+            "review": False,
+        }
     }
     for key, val in pref_defaults.items():
         if key not in config["preferences"]:
@@ -60,7 +67,6 @@ def load_config():
         "base_url": "https://api.deepseek.com",
         "available_models": ["deepseek-chat", "deepseek-reasoner"],
         "metadata_model": "deepseek-chat",
-        "chat_model": "deepseek-chat"
     }
 
     modified = False
@@ -70,7 +76,7 @@ def load_config():
             modified = True
 
     if not config["preferences"]["model"]:
-        config["preferences"]["model"] = config["ai_settings"]["chat_model"]
+        config["preferences"]["model"] = config["ai_settings"]["metadata_model"]
         modified = True
 
     if modified:
