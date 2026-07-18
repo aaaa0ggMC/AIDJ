@@ -1,7 +1,0 @@
-openai
-requests
-tqdm
-rapidfuzz
-rich
-questionary
-zhconv
