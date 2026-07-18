@@ -1,5 +1,0 @@
-# 这是你的自定义歌单
-# 每行写一首歌名（支持模糊搜索）
-Pogo - Forgot
-Merry Christmas Mr. Lawrence
-Listening for weather

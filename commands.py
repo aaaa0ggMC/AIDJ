@@ -338,6 +338,38 @@ def cmd_injects(ctx: Context, *args):
     new_state = on_icon if injects[field] else off_icon
     console.print(f"[green]📦 Library inject [bold]{field}[/] → {new_state}[/]")
 
+@registry.register("sync")
+def cmd_sync(ctx: Context, *args):
+    """Sync missing song metadata via AI API."""
+    from core.config import scan_music_files
+    # Re-scan folders to pick up newly added files
+    fresh = scan_music_files(ctx.config.get('music_folders', []))
+    ctx.aidj.music_paths = fresh
+
+    missing = {k: v for k, v in fresh.items() if k not in ctx.aidj.metadata}
+    if not missing:
+        console.print(f"[green]✅ All {len(fresh)} tracks have metadata — nothing to sync.[/]")
+        return
+
+    if not args or args[0] not in ("run", "go"):
+        console.print(
+            f"[yellow]📋 {len(missing)} tracks missing metadata (out of {len(fresh)} total).[/] "
+            f"Use [bold]sync run[/] to start syncing."
+        )
+        return
+
+    from core.dj_core import sync_metadata as _do_sync
+
+    model = ctx.config['ai_settings'].get('metadata_model', 'deepseek-chat')
+    conc = ctx.config['preferences'].get('metadata_concurrency', 1)
+    _do_sync(ctx.aidj.client, missing, ctx.aidj.metadata, model, concurrency=conc)
+
+    leftover = sum(1 for k in fresh if k not in ctx.aidj.metadata)
+    console.print(
+        f"[green]✅ Sync done.[/] "
+        f"{len(missing) - leftover}/{len(missing)} succeeded, {leftover} remaining."
+    )
+
 @registry.register("adjmethod", "loudnorm")
 def cmd_adjmethod(ctx: Context, *args):
     """Set volume adjustment strategy: linear (RMS) or lufs (ITU-R BS.1770 perceptual)."""
@@ -1181,7 +1213,7 @@ def cmd_pc(ctx: Context, *args):
             # Context Pruning (Keep last 10 messages)
             with fetch_lock:
                 if len(ctx.aidj.chat_history) > 10:
-                    ctx.aidj.chat_history = ctx.aidj.chat_history[-10:]
+                    ctx.aidj.chat_history = [ctx.aidj.chat_history[0]] + ctx.aidj.chat_history[-9:]
 
                 # 将内部 deque 赋值给 dj session 对象，供 next_step 内部解析使用
                 ctx.aidj.played_songs = set(rolling_history)
@@ -1197,11 +1229,15 @@ def cmd_pc(ctx: Context, *args):
             else:
                 # 后续轮次：侧重基于播放顺序的智能联想
                 last_tracks = list(rolling_history)[-15:]
+                if fetch_count < 3:
+                    negative_hint = "but DO follow the negative part of the initial prompt. "
+                else:
+                    negative_hint = "and gradually relax any original exclusions. "
                 phase_instruction = (
                     f"### PHASE {fetch_count + 1}: AUTONOMOUS RADIO FLOW\n"
                     f"Recent Sequence: [{', '.join(last_tracks)}]\n"
-                    f"Task: Ignore the initial prompt. Based on the sequence above, "
-                    f"predict and curate the next logical musical chapter (at least 8 tracks)."
+                    f"Task: Ignore the positive part of the initial prompt {negative_hint}"
+                    f"Based on the sequence above, predict and curate the next logical musical chapter (at least 8 tracks)."
                 )
 
             full_prompt = (

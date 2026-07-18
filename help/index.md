@@ -99,6 +99,7 @@
 | `concurrency` | `conc` | Set metadata sync concurrency |
 | `token` | `tokens` | Show session token usage |
 | `injects` | `inj` | Toggle library metadata injects |
+| `sync` | — | Manually sync missing metadata |
 | `refresh` | — | Refresh session (keep history) |
 | `reset` | — | Full session reset |
 | `status` | `check`, `conf` | Configuration dashboard |

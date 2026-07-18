@@ -14,6 +14,7 @@
 | `concurrency` | `conc` | Set metadata sync concurrency |
 | `token` | `tokens` | Show session token usage |
 | `injects` | `inj` | Toggle library metadata injects |
+| `sync` | — | Manually sync missing metadata via AI API |
 | `refresh` | — | Refresh session (keep history) |
 | `reset` | — | Full session reset |
 | `status` | `check`, `conf` | Configuration dashboard |
@@ -104,6 +105,19 @@ Fields: `genre`, `emotion`, `language`, `loudness`, `review`.
 Enabled fields appear as extra columns in the library table sent to the AI,
 improving recommendation quality at the cost of higher token usage per
 turn.
+
+### `sync`
+
+Manually trigger metadata sync for songs missing metadata. Normally sync runs
+automatically at startup for any new songs detected.
+
+```
+sync          # show how many tracks are missing metadata
+sync run      # run the sync (uses metadata_model + concurrency from config)
+```
+
+After sync, new metadata is immediately available to the AI — no restart
+needed.
 
 ### `refresh`
 

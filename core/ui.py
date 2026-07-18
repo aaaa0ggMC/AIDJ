@@ -19,6 +19,7 @@ def print_banner(config, musics, metadata):
 
     music_count = len(musics)
     meta_count = len(metadata)
+    valid_count = len(set(metadata.keys()) & set(musics.keys()))
     coverage = f"{meta_count}/{music_count}" if music_count else "—"
     volbal_state = "[bold green]ON[/]" if volbal else "[dim]OFF[/]"
     freq_state = "[bold green]ON[/]" if freq else "[dim]OFF[/]"
@@ -35,7 +36,7 @@ def print_banner(config, musics, metadata):
         f"\n"
         f"[bold]🎵 Music Library[/]\n"
         f"{folder_list}\n"
-        f"  Tracks    [bold green]{music_count}[/]  |  Metadata  [bold cyan]{coverage}[/]\n"
+        f"  Tracks    [bold green]{music_count}[/]  |  Metadata  [bold cyan]{coverage}[/]  |  Valid  [bold yellow]{valid_count}[/]\n"
         f"\n"
         f"[bold]⚙️  Quick Status[/]\n"
         f"  VolBal     {volbal_state}    FreqRec  {freq_state}    AutoTrig  {trigger_state}"

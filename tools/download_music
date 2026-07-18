@@ -1,2 +1,2 @@
 #!/bin/bash
-uv run pyncm --load $HOME/AIPlayer/ncm_info -o ../../../CChaos/Musics --template "{artists} - {track}" --lyric-no "lrc tlyric romalrc yrc" --quality exhigh $*
+uv run pyncm --load $HOME/AIPlayer/ncm_info -o $HOME/CChaos/Musics --template "{artists} - {track}" --lyric-no "lrc tlyric romalrc yrc" --quality exhigh $*
