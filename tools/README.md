@@ -10,7 +10,7 @@ cd tools && ./download_music "<关键词>"
 
 通过 Netease Cloud Music API (`pyncm`) 下载音乐到 `$HOME/CChaos/Musics`。
 
-需要: `~/.ncm_info` 登录凭据文件。
+需要: `~/.ncm_info` 登录凭据文件（位于 `$HOME/Apps/ncm_info`）。
 
 ## lyrics_sync
 
@@ -21,6 +21,16 @@ uv run python tools/lyrics_sync.py
 批量下载歌词（LRC 文件），从 Netease Cloud Music API 获取，存入 `data/lyrics/`。
 
 需要: NCM API (`localhost:3000`) 正在运行。
+
+## lyrics_sync_lyrica
+
+```bash
+uv run tools/lyrics_sync_lyrica.py
+```
+
+批量下载歌词（LRC 文件），通过 Lyrica API 获取，存入 `data/lyrics/`。
+
+需要: Lyrica 服务在 `localhost:2778` 运行 (`$HOME/Apps/start_lyrica`)。
 
 ## simp_zhconv
 
